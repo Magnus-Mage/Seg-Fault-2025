@@ -10,14 +10,14 @@ class ForthLexer {
 private:
     std::unordered_set<std::string> controlWords;
     std::unordered_set<std::string> mathWords;
-    
+        
     int currentLine;
     int currentColumn;
     size_t currentPos;
     std::string source;
     
-    char currentChar();
-    char peekChar();
+    [[nodiscard]] char currentChar() const;
+    [[nodiscard]] char peekChar() const;
     void advance();
     void skipWhitespace();
     void skipComment();
