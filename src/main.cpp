@@ -10,6 +10,7 @@
 #include "parser/ast.h"
 #include "dictionary/dictionary.h"
 #include "common/utils.h"
+#include "functional"
 
 namespace fs = std::filesystem;
 using namespace std::chrono;

@@ -314,7 +314,7 @@ private:
     
 public:
     VariableDeclarationNode(const std::string& name, bool constant, int line, int column)
-        : ASTNode(isConstant ? NodeType::CONSTANT_DECLARATION : NodeType::VARIABLE_DECLARATION, 
+        : ASTNode(constant ? NodeType::CONSTANT_DECLARATION : NodeType::VARIABLE_DECLARATION, 
                  line, column), 
           varName(name), isConstant(constant) {}
     

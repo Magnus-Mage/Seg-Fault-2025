@@ -38,6 +38,9 @@ public:
     [[nodiscard]] auto getDictionary() const -> const ForthDictionary& { return *dictionary; }
     auto getDictionary() -> ForthDictionary& { return *dictionary; }
     
+    // Collect all the words when called
+    auto collectWordDefinations() -> void;
+    
     // Parser statistics
     struct ParseStatistics {
         size_t totalTokens;

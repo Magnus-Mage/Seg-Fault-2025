@@ -17,6 +17,11 @@ ForthParser::ForthParser(std::unique_ptr<ForthDictionary> dict)
     tokens = tokenList;
     currentPos = 0;
     errors.clear();
+
+    // Pass 1
+    collectWordDefinations();
+
+    currentPos = 0;
     
     auto program = std::make_unique<ProgramNode>();
     
@@ -384,3 +389,34 @@ auto ForthParser::validateForwardReferences() -> void {
     }
 }
 
+// Collect word definations before parsing the program
+auto ForthParser::collectWordDefinations() -> void {
+    size_t savedPos = currentPos;
+    
+    while (!isAtEnd() && currentToken().type != TokenType::EOF_TOKEN) {
+        if (currentToken().type == TokenType::COLON_DEF) {
+            advance(); // skip ':'
+            
+            if (currentToken().type == TokenType::WORD) {
+                const std::string wordName = ForthUtils::toUpper(currentToken().value);
+                
+                // Add empty definition to dictionary (will be filled in later)
+                dictionary->markForwardReference(wordName);
+                
+                advance(); // skip word name
+                
+                // Skip to semicolon
+                while (!isAtEnd() && currentToken().type != TokenType::SEMICOLON) {
+                    advance();
+                }
+                if (currentToken().type == TokenType::SEMICOLON) {
+                    advance(); // skip ';'
+                }
+            }
+        } else {
+            advance();
+        }
+    }
+    
+    currentPos = savedPos; // Reset position
+}
