@@ -330,3 +330,126 @@ auto ForthDictionary::printDictionary() const -> void {
     
     return dict;
 }
+
+[[nodiscard]] auto ForthDictionary::getAllWords() const -> std::vector<const WordEntry*> {
+    std::vector<const WordEntry*> result;
+    result.reserve(words.size() + variables.size() + constants.size());
+    
+    for (const auto& [name, entry] : words) {
+        result.push_back(entry.get());
+    }
+    for (const auto& [name, entry] : variables) {
+        result.push_back(entry.get());
+    }
+    for (const auto& [name, entry] : constants) {
+        result.push_back(entry.get());
+    }
+    
+    return result;
+}
+
+[[nodiscard]] auto ForthDictionary::getUserDefinedWords() const -> std::vector<const WordEntry*> {
+    std::vector<const WordEntry*> result;
+    
+    for (const auto& [name, entry] : words) {
+        if (entry->type == WordEntry::WordType::USER_DEFINED) {
+            result.push_back(entry.get());
+        }
+    }
+    
+    return result;
+}
+
+[[nodiscard]] auto ForthDictionary::getBuiltinWords() const -> std::vector<const WordEntry*> {
+    std::vector<const WordEntry*> result;
+    
+    for (const auto& [name, entry] : words) {
+        if (entry->type == WordEntry::WordType::BUILTIN || 
+            entry->type == WordEntry::WordType::MATH_BUILTIN) {
+            result.push_back(entry.get());
+        }
+    }
+    
+    return result;
+}
+
+auto ForthDictionary::clear() -> void {
+    words.clear();
+    variables.clear();
+    constants.clear();
+    definitionStack.clear();
+    
+    // Reinitialize built-in words
+    initializeBuiltinWords();
+    initializeMathWords();
+    initializeControlWords();
+    initializeStackWords();
+    initializeMemoryWords();
+}
+
+[[nodiscard]] auto ForthDictionary::clone() const -> std::unique_ptr<ForthDictionary> {
+    auto newDict = std::make_unique<ForthDictionary>();
+    
+    // Clear the new dictionary's default initialization
+    newDict->words.clear();
+    newDict->variables.clear();
+    newDict->constants.clear();
+    
+    // Copy all entries (simplified deep copy)
+    for (const auto& [name, entry] : words) {
+        auto newEntry = std::make_unique<WordEntry>(entry->name, entry->type, entry->isImmediate);
+        newEntry->cppImplementation = entry->cppImplementation;
+        newEntry->stackEffect = entry->stackEffect;
+        newEntry->isCompiled = entry->isCompiled;
+        newEntry->compiledCode = entry->compiledCode;
+        // Note: definition is not deep-copied for simplicity
+        newDict->words[name] = std::move(newEntry);
+    }
+    
+    for (const auto& [name, entry] : variables) {
+        auto newEntry = std::make_unique<WordEntry>(entry->name, entry->type, entry->isImmediate);
+        newEntry->stackEffect = entry->stackEffect;
+        newDict->variables[name] = std::move(newEntry);
+    }
+    
+    for (const auto& [name, entry] : constants) {
+        auto newEntry = std::make_unique<WordEntry>(entry->name, entry->type, entry->isImmediate);
+        newEntry->stackEffect = entry->stackEffect;
+        newDict->constants[name] = std::move(newEntry);
+    }
+    
+    return newDict;
+}
+
+// Forward reference handling
+auto ForthDictionary::markForwardReference(const std::string& name) -> void {
+    const auto normalizedName = normalizeWordName(name);
+    
+    // Create a placeholder entry
+    auto entry = std::make_unique<WordEntry>(normalizedName, WordEntry::WordType::USER_DEFINED);
+    entry->stackEffect = {0, 0, false}; // Unknown effect
+    entry->isCompiled = false;
+    
+    words[normalizedName] = std::move(entry);
+}
+
+auto ForthDictionary::resolveForwardReference(const std::string& name, std::unique_ptr<ASTNode> definition) -> void {
+    const auto normalizedName = normalizeWordName(name);
+    
+    auto it = words.find(normalizedName);
+    if (it != words.end() && !it->second->isCompiled) {
+        it->second->definition = std::move(definition);
+        it->second->isCompiled = false; // Will be compiled later
+    }
+}
+
+[[nodiscard]] auto ForthDictionary::hasUnresolvedReferences() const -> bool {
+    for (const auto& [name, entry] : words) {
+        if (entry->type == WordEntry::WordType::USER_DEFINED && 
+            !entry->definition && 
+            !entry->isCompiled) {
+            return true;
+        }
+    }
+    return false;
+}
