@@ -94,6 +94,8 @@ private:
     auto initializeControlWords() -> void;
     auto initializeStackWords() -> void;
     auto initializeMemoryWords() -> void;
+    auto initializeComparisonWords() -> void;  
+    auto initializeIOWords() -> void;          
     
     [[nodiscard]] auto normalizeWordName(const std::string& name) const -> std::string;
 };
