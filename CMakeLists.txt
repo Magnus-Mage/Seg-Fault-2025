@@ -14,13 +14,17 @@ set(SOURCES
     ./src/parser/ast.cpp
     ./src/parser/parser.cpp
     ./src/dictionary/dictionary.cpp
+    ./src/common/utils.h
 )
 
 # Include directories
 include_directories(src)
 
+
 # Main executable
 add_executable(forth_compiler ${SOURCES})
+
+target_compile_features(forth_compiler PRIVATE cxx_std_20)
 
 # Enable testing
 enable_testing()
