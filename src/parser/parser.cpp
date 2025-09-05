@@ -3,6 +3,7 @@
 #include "common/utils.h"
 #include <stdexcept>
 #include <sstream>
+#include <unordered_set>
 
 ForthParser::ForthParser() : currentPos(0) {
     dictionary = DictionaryFactory::create(DictionaryFactory::Configuration::STANDARD);
@@ -322,22 +323,9 @@ auto ForthParser::addError(const std::string& message, const Token& token) -> vo
 
 auto ForthParser::analyzeWordUsage(const std::string& wordName) -> void {
     if (!dictionary->isWordDefined(wordName)) {
-        if (!dictionary->isWordDefined(wordName)) {
-            // Don't immediately report as error - could be forward reference
-            // Instead, mark it for later resolution
-            dictionary->markForwardReference(wordName);
-        
-            // For now, only warn about truly undefined words
-            // Common FORTH words that might not be defined yet
-            static const std::unordered_set<std::string> commonWords = {
-                "FACTORIAL", "DISTANCE", "SQUARE", "CUBE", "ABS-VALUE", 
-                "COUNT-DOWN", "COMPLEX-CALC", "HYPOTENUSE-ANGLE"
-            };
-        
-            if (commonWords.find(wordName) == commonWords.end()) {
-                addError("Undefined word: " + wordName);
-            }
-        }
+        // For now, just skip forward reference checking
+        // This will be improved in Phase 4
+        addError("Undefined word: " + wordName);
     }
 }
 
@@ -395,3 +383,4 @@ auto ForthParser::validateForwardReferences() -> void {
         addError("Some forward references remain unresolved");
     }
 }
+
