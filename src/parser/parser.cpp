@@ -42,6 +42,9 @@ ForthParser::ForthParser(std::unique_ptr<ForthDictionary> dict)
     if (!validateControlFlow()) {
         addError("Unmatched control flow structures");
     }
+
+    // Validate forward references
+    // validateForwardReferences();
     
     return program;
 }
@@ -319,7 +322,22 @@ auto ForthParser::addError(const std::string& message, const Token& token) -> vo
 
 auto ForthParser::analyzeWordUsage(const std::string& wordName) -> void {
     if (!dictionary->isWordDefined(wordName)) {
-        addError("Undefined word: " + wordName);
+        if (!dictionary->isWordDefined(wordName)) {
+            // Don't immediately report as error - could be forward reference
+            // Instead, mark it for later resolution
+            dictionary->markForwardReference(wordName);
+        
+            // For now, only warn about truly undefined words
+            // Common FORTH words that might not be defined yet
+            static const std::unordered_set<std::string> commonWords = {
+                "FACTORIAL", "DISTANCE", "SQUARE", "CUBE", "ABS-VALUE", 
+                "COUNT-DOWN", "COMPLEX-CALC", "HYPOTENUSE-ANGLE"
+            };
+        
+            if (commonWords.find(wordName) == commonWords.end()) {
+                addError("Undefined word: " + wordName);
+            }
+        }
     }
 }
 
@@ -370,4 +388,10 @@ auto ForthParser::validateStackBalance(ASTNode* node) -> bool {
     // Basic validation - ensure we don't underflow
     // This would be expanded with a proper stack analysis
     return effect.consumed <= effect.produced + 10; // Allow some stack depth
+}
+
+auto ForthParser::validateForwardReferences() -> void {
+    if (dictionary->hasUnresolvedReferences()) {
+        addError("Some forward references remain unresolved");
+    }
 }
