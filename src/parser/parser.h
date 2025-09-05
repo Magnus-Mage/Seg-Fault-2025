@@ -80,6 +80,7 @@ private:
     [[nodiscard]] auto validateControlFlow() const -> bool;
     [[nodiscard]] auto isControlFlowToken(TokenType type) const -> bool;
     [[nodiscard]] auto isEndOfDefinition() const -> bool;
+    auto validateForwardReferences() -> void;
     
     // Semantic validation during parsing
     auto validateStackBalance(ASTNode* node) -> bool;
