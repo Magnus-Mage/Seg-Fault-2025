@@ -185,7 +185,8 @@ public:
     
     auto accept(ASTVisitor& visitor) -> void override;
     auto toString() const -> std::string override {
-        return "String[" + (isPrintString ? "PRINT:" : "") + value + "]";
+        std::string prefix = isPrintString ? "PRINT:" : "";
+        return "String[" + prefix + value + "]";
     }
     
     auto getStackEffect() const -> StackEffect override {
@@ -227,7 +228,10 @@ public:
     
     auto accept(ASTVisitor& visitor) -> void override;
     auto toString() const -> std::string override {
-        return "If[" + (hasElse() ? "with-else" : "no-else") + "]";
+        std::string result = "If[";
+        result += hasElse() ? "with-else" : "no-else";
+        result += "]";
+        return result;
     }
     
     auto getStackEffect() const -> StackEffect override {
