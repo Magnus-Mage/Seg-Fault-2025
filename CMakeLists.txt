@@ -11,6 +11,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(SOURCES
     src/main.cpp
     src/lexer/lexer.cpp
+    ./src/parser/ast.cpp
+    ./src/parser/parser.cpp
+    ./src/dictionary/dictionary.cpp
 )
 
 # Include directories
@@ -29,3 +32,6 @@ target_compile_options(forth_compiler PRIVATE
     $<$<CONFIG:Debug>:-g -O0>
     $<$<CONFIG:Release>:-O3>
 )
+
+# Add math library for advanced math functions
+target_link_libraries(forth_compiler m)
