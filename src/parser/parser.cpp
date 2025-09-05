@@ -327,4 +327,48 @@ auto ForthParser::analyzeWordUsage(const std::string& wordName) -> void {
     // This would be implemented by traversing the AST
     // For now, return a basic implementation
     return {tokens.size(), 0, 0, 0, 0, 0, false, false};
+
+auto ForthParser::parseExpression() -> std::unique_ptr<ASTNode> {
+    // For now, expressions are handled as primary expressions
+    // This can be expanded for more complex expression parsing later
+    return parsePrimaryExpression();
+}
+
+auto ForthParser::parseControlFlow() -> std::unique_ptr<ASTNode> {
+    const auto& token = currentToken();
+    
+    switch (token.type) {
+        case TokenType::IF:
+            return parseIfStatement();
+        case TokenType::BEGIN:
+            return parseBeginUntilLoop();
+        default:
+            addError("Expected control flow token", token);
+            return nullptr;
+    }
+}
+
+[[nodiscard]] auto ForthParser::isControlFlowToken(TokenType type) const -> bool {
+    return type == TokenType::IF || type == TokenType::THEN || type == TokenType::ELSE ||
+           type == TokenType::BEGIN || type == TokenType::UNTIL ||
+           type == TokenType::DO || type == TokenType::LOOP;
+}
+
+[[nodiscard]] auto ForthParser::isEndOfDefinition() const -> bool {
+    return currentToken().type == TokenType::SEMICOLON || isAtEnd();
+}
+
+auto ForthParser::validateStackBalance(ASTNode* node) -> bool {
+    if (!node) return true;
+    
+    auto effect = node->getStackEffect();
+    if (!effect.isKnown) {
+        // Can't validate unknown effects statically
+        return true;
+    }
+    
+    // Basic validation - ensure we don't underflow
+    // This would be expanded with a proper stack analysis
+    return effect.consumed <= effect.produced + 10; // Allow some stack depth
+}
 }
