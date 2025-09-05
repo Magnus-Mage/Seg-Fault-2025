@@ -1,4 +1,4 @@
-add_executable(test_lexer
+add_executable(test_forth_compiler
     test_main.cpp
     lexer/test_lexer.cpp
     parser/test_parser.cpp
