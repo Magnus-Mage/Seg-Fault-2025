@@ -327,7 +327,7 @@ auto ForthParser::analyzeWordUsage(const std::string& wordName) -> void {
     // This would be implemented by traversing the AST
     // For now, return a basic implementation
     return {tokens.size(), 0, 0, 0, 0, 0, false, false};
-
+}
 auto ForthParser::parseExpression() -> std::unique_ptr<ASTNode> {
     // For now, expressions are handled as primary expressions
     // This can be expanded for more complex expression parsing later
@@ -370,5 +370,4 @@ auto ForthParser::validateStackBalance(ASTNode* node) -> bool {
     // Basic validation - ensure we don't underflow
     // This would be expanded with a proper stack analysis
     return effect.consumed <= effect.produced + 10; // Allow some stack depth
-}
 }
