@@ -7,7 +7,7 @@ A minimal FORTH compiler that generates ESP-IDF compatible C++ code for ESP32 mi
 ### Features Implemented
 - [x] Project structure
 - [x] Lexical analyzer
-- [ ] Parser
+- [x] Parser
 - [ ] Code generator
 - [ ] ESP32 integration
 
