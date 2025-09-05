@@ -10,6 +10,8 @@ ForthDictionary::ForthDictionary() {
     initializeControlWords();
     initializeStackWords();
     initializeMemoryWords();
+    initializeComparisonWords();  
+    initializeIOWords();
 }
 
 auto ForthDictionary::defineWord(const std::string& name, std::unique_ptr<ASTNode> definition) -> void {
@@ -240,6 +242,69 @@ auto ForthDictionary::initializeMemoryWords() -> void {
         auto value = forth_stack.pop();
         *reinterpret_cast<char*>(addr) = static_cast<char>(value);
     })", {2, 0, true});
+}
+
+auto ForthDictionary::initializeComparisonWords() -> void {
+    // Comparison operations
+    defineBuiltinWord("<", R"({
+        auto b = forth_stack.pop();
+        auto a = forth_stack.pop();
+        forth_stack.push(a < b ? -1 : 0);
+    })", {2, 1, true});
+    
+    defineBuiltinWord("<=", R"({
+        auto b = forth_stack.pop();
+        auto a = forth_stack.pop();
+        forth_stack.push(a <= b ? -1 : 0);
+    })", {2, 1, true});
+    
+    defineBuiltinWord(">", R"({
+        auto b = forth_stack.pop();
+        auto a = forth_stack.pop();
+        forth_stack.push(a > b ? -1 : 0);
+    })", {2, 1, true});
+    
+    defineBuiltinWord(">=", R"({
+        auto b = forth_stack.pop();
+        auto a = forth_stack.pop();
+        forth_stack.push(a >= b ? -1 : 0);
+    })", {2, 1, true});
+    
+    defineBuiltinWord("=", R"({
+        auto b = forth_stack.pop();
+        auto a = forth_stack.pop();
+        forth_stack.push(a == b ? -1 : 0);
+    })", {2, 1, true});
+    
+    defineBuiltinWord("<>", R"({
+        auto b = forth_stack.pop();
+        auto a = forth_stack.pop();
+        forth_stack.push(a != b ? -1 : 0);
+    })", {2, 1, true});
+    
+    defineBuiltinWord("0<", "forth_stack.push(forth_stack.pop() < 0 ? -1 : 0)", {1, 1, true});
+    defineBuiltinWord("0=", "forth_stack.push(forth_stack.pop() == 0 ? -1 : 0)", {1, 1, true});
+    defineBuiltinWord("0>", "forth_stack.push(forth_stack.pop() > 0 ? -1 : 0)", {1, 1, true});
+}
+
+auto ForthDictionary::initializeIOWords() -> void {
+    // Input/Output operations
+    defineBuiltinWord(".", R"({
+        std::cout << forth_stack.pop() << " ";
+    })", {1, 0, true});
+    
+    defineBuiltinWord("EMIT", R"({
+        std::cout << static_cast<char>(forth_stack.pop());
+    })", {1, 0, true});
+    
+    defineBuiltinWord("CR", "std::cout << std::endl", {0, 0, true});
+    
+    defineBuiltinWord("SPACE", "std::cout << \" \"", {0, 0, true});
+    
+    defineBuiltinWord("SPACES", R"({
+        auto count = forth_stack.pop();
+        for (int i = 0; i < count; ++i) std::cout << " ";
+    })", {1, 0, true});
 }
 
 [[nodiscard]] auto ForthDictionary::normalizeWordName(const std::string& name) const -> std::string {
