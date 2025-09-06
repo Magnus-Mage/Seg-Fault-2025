@@ -107,8 +107,7 @@ namespace llvm {
         mutable std::stringstream irStream;
         
     public:
-        Module(const std::string& name) {
-            irStream << "; ModuleID = '" << name << "'\n";
+        Module(const std::string& name, llvm::LLVMContext& context = *static_cast<llvm::LLVMContext*>(nullptr)) {    irStream << "; ModuleID = '" << name << "'\n";
             setTargetTriple("x86_64-unknown-linux-gnu");
         }
         
@@ -372,10 +371,9 @@ namespace llvm {
 
 // ForthLLVMCodegen Implementation
 ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName) 
-    : context(std::make_unique<llvm::LLVMContext>())
-    , module(std::make_unique<llvm::Module>(moduleName, *context))
-    , builder(std::make_unique<llvm::IRBuilder<>>(*context))
-    , targetTriple("xtensa-esp32-elf")  // Default to ESP32
+    : context(std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext()))
+    , module(std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName)))
+    , builder(std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context))), targetTriple("xtensa-esp32-elf")  // Default to ESP32
     , stackPointer(nullptr)
     , stackBase(nullptr)
     , returnStackPointer(nullptr) 
@@ -385,8 +383,9 @@ ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName)
     , currentFunction(nullptr)
     , analyzer(nullptr)
     , dictionary(nullptr)
-    , inWordDefinition(false) {
-    
+    , inWordDefinition(false) 
+{
+
     initializeLLVM();
     createForthRuntime();
 }
@@ -415,7 +414,7 @@ auto ForthLLVMCodegen::setTarget(const std::string& triple) -> void {
     module->setTargetTriple(triple);
 }
 
-auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module> {
+auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module, ModuleDeleter> {
     errors.clear();
     
     try {
@@ -425,7 +424,7 @@ auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<l
             return nullptr;
         }
         
-        return std::move(module);
+        return std::unique_ptr<llvm::Module, ModuleDeleter>(module.release());
     } catch (const std::exception& e) {
         addError("Code generation failed: " + std::string(e.what()));
         return nullptr;
@@ -991,8 +990,7 @@ ForthCompiler::ForthCompiler(const CodegenConfig& cfg)
 
 ForthCompiler::~ForthCompiler() = default;
 
-auto ForthCompiler::compile(const std::string& forthCode) -> std::unique_ptr<llvm::Module> {
-    errors.clear();
+auto ForthCompiler::compile(const std::string& forthCode) -> std::unique_ptr<llvm::Module, ModuleDeleter> {    errors.clear();
     
     try {
         // Lexical analysis
@@ -1163,3 +1161,20 @@ auto addESP32Attributes(llvm::Function* func) -> void {
 }
 
 } // namespace LLVMUtils
+
+// Custom deleter implementations
+void LLVMContextDeleter::operator()(llvm::LLVMContext* ptr) {
+    delete ptr;
+}
+
+void ModuleDeleter::operator()(llvm::Module* ptr) {
+    delete ptr;
+}
+
+void IRBuilderDeleter::operator()(llvm::IRBuilder<>* ptr) {
+    delete ptr;
+}
+
+void TargetMachineDeleter::operator()(llvm::TargetMachine* ptr) {
+    delete ptr;
+}

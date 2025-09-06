@@ -51,11 +51,10 @@ class ForthLLVMCodegen : public ASTVisitor {
 private:
     // LLVM core objects with custom deleters
     std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter> context;
-    std::unique_ptr<llvm::Module, ModuleDeleter> module;
+    std::unique_ptr<llvm::Module, ModuleDeleter> module;  
     std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter> builder;
-    
     // Target configuration
-    std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter> targetMachine;
+    std::unique_ptr<llvm::TargetMachine> targetMachine;
     std::string targetTriple;
     
     // FORTH runtime state
@@ -107,8 +106,10 @@ public:
     
     // LLVM module management
     auto getModule() -> llvm::Module* { return module.get(); }
-    auto releaseModule() -> std::unique_ptr<llvm::Module, ModuleDeleter> { return std::move(module); }
-    
+    auto releaseModule() -> std::unique_ptr<llvm::Module, ModuleDeleter> { 
+        return std::unique_ptr<llvm::Module, ModuleDeleter>(module.release());
+    } 
+
     // Error handling
     [[nodiscard]] auto hasErrors() const -> bool { return !errors.empty(); }
     [[nodiscard]] auto getErrors() const -> const std::vector<std::string>& { return errors; }
