@@ -1,4 +1,5 @@
 #include "semantic/analyzer.h"
+#include "dictionary/dictionary.h"
 #include "common/utils.h"
 #include <algorithm>
 #include <sstream>
@@ -253,8 +254,8 @@ auto SemanticAnalyzer::calculateWordEffect(const std::string& wordName) -> Typed
         return effect;
     }
     
-    // Unknown word
-    addWarning("Unknown word referenced: " + wordName);
+    // Unknown word - don't add warning here to avoid spam
+    // The parser will catch undefined words
     return TypedStackEffect(ASTNode::StackEffect{0, 0, false});
 }
 
@@ -448,13 +449,18 @@ auto combine(const ASTNode::StackEffect& a, const ASTNode::StackEffect& b) -> AS
     if (result.isKnown) {
         // b consumes from what a produces
         if (a.produced >= b.consumed) {
-            result.consumed = a.consumed + (b.consumed - a.produced);
-            result.produced = b.produced;
+            result.consumed = a.consumed + std::max(0, b.consumed - a.produced);
+            result.produced = a.produced - b.consumed + b.produced;
         } else {
-            // Stack underflow
+            // Stack underflow scenario
             result.consumed = a.consumed + b.consumed - a.produced;
             result.produced = b.produced;
+            result.isKnown = false; // Mark as uncertain due to underflow
         }
+    } else {
+        // Conservative estimate when effects are unknown
+        result.consumed = a.consumed + b.consumed;
+        result.produced = a.produced + b.produced;
     }
     
     return result;
@@ -489,9 +495,12 @@ auto conditional(const ASTNode::StackEffect& condition,
         
         if (thenNet == elseNet) {
             result.consumed += std::max(thenBranch.consumed, elseBranch.consumed);
-            result.produced = std::max(thenBranch.produced, elseBranch.produced);
+            result.produced = thenNet; // Net effect after condition consumption
         } else {
             result.isKnown = false;
+            // Conservative estimate
+            result.consumed += std::max(thenBranch.consumed, elseBranch.consumed);
+            result.produced = std::max(thenBranch.produced, elseBranch.produced);
         }
     }
     
@@ -503,9 +512,8 @@ auto loop(const ASTNode::StackEffect& body,
     ASTNode::StackEffect result;
     
     // Loops are complex to analyze statically
-    // For now, assume loop maintains stack balance
     result.consumed = std::max(body.consumed, condition.consumed);
-    result.produced = 0; // Conservative estimate
+    result.produced = 0; // Conservative: assume loop consumes its stack items
     result.isKnown = body.isKnown && condition.isKnown;
     
     if (result.isKnown) {
@@ -513,6 +521,7 @@ auto loop(const ASTNode::StackEffect& body,
         int bodyNet = body.produced - body.consumed;
         if (bodyNet != 0) {
             result.isKnown = false; // Unknown number of iterations affects stack
+            result.produced = bodyNet; // Optimistic: one iteration net effect
         }
     }
     

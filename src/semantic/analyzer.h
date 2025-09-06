@@ -92,6 +92,9 @@ public:
     // Main analysis entry point
     auto analyze(ProgramNode& program) -> bool;
     
+    // Dictionary management - ADDED THIS MISSING METHOD
+    auto setDictionary(const ForthDictionary* dict) -> void { dictionary = dict; }
+    
     // Stack effect queries
     [[nodiscard]] auto getStackEffect(const std::string& wordName) const -> ASTNode::StackEffect;
     [[nodiscard]] auto getTypedStackEffect(const std::string& wordName) const -> TypedStackEffect;
@@ -111,6 +114,21 @@ public:
     [[nodiscard]] auto getMaxStackDepth() const -> int { return currentStack.maxDepth; }
     [[nodiscard]] auto getMinStackDepth() const -> int { return currentStack.minDepth; }
     
+    // Analysis configuration
+    struct AnalysisOptions {
+        bool strictTypeChecking = false;
+        bool warnOnUnknownWords = true;
+        bool allowRecursion = true;
+        int maxRecursionDepth = 100;
+        bool trackVariableTypes = true;
+        bool optimizeStackEffects = true;
+        
+        AnalysisOptions() = default;
+    };
+    
+    auto setOptions(const AnalysisOptions& opts) -> void { options = opts; }
+    [[nodiscard]] auto getOptions() const -> const AnalysisOptions& { return options; }
+    
     // Visitor pattern implementation
     void visit(ProgramNode& node) override;
     void visit(WordDefinitionNode& node) override;
@@ -123,6 +141,8 @@ public:
     void visit(VariableDeclarationNode& node) override;
     
 private:
+    AnalysisOptions options;
+    
     // Stack effect calculation
     auto calculateWordEffect(const std::string& wordName) -> TypedStackEffect;
     auto analyzeWordDefinition(WordDefinitionNode& node) -> TypedStackEffect;
@@ -168,22 +188,45 @@ namespace StackEffectUtils {
                                   const ASTNode::StackEffect& elseBranch) -> ASTNode::StackEffect;
     [[nodiscard]] auto loop(const ASTNode::StackEffect& body, 
                            const ASTNode::StackEffect& condition) -> ASTNode::StackEffect;
+    
+    // Additional utilities for Phase 4
+    [[nodiscard]] auto isBalanced(const ASTNode::StackEffect& effect) -> bool;
+    [[nodiscard]] auto wouldUnderflow(const ASTNode::StackEffect& effect, int currentDepth) -> bool;
+    [[nodiscard]] auto calculateMinRequiredDepth(const std::vector<ASTNode::StackEffect>& effects) -> int;
+    auto optimizeEffectSequence(std::vector<ASTNode::StackEffect>& effects) -> void;  // Removed nodiscard
 }
 
-// Semantic analysis configuration
-struct AnalysisConfig {
-    bool strictTypeChecking;
-    bool warnOnUnknownWords;
-    bool allowRecursion;
-    int maxRecursionDepth;
-    bool optimizeStackEffects;
+// Semantic analysis reporting
+struct SemanticReport {
+    std::vector<std::string> errors;
+    std::vector<std::string> warnings;
+    std::unordered_map<std::string, ASTNode::StackEffect> wordEffects;
+    int maxStackDepth;
+    int minStackDepth;
+    size_t totalWords;
+    size_t builtinWords;
+    size_t userDefinedWords;
+    bool hasRecursion;
+    bool hasComplexControlFlow;
     
-    AnalysisConfig() 
-        : strictTypeChecking(false)
-        , warnOnUnknownWords(true)
-        , allowRecursion(true)
-        , maxRecursionDepth(100)
-        , optimizeStackEffects(true) {}
+    SemanticReport() : maxStackDepth(0), minStackDepth(0), totalWords(0), 
+                      builtinWords(0), userDefinedWords(0), 
+                      hasRecursion(false), hasComplexControlFlow(false) {}
+};
+
+// High-level semantic analysis interface
+class SemanticAnalysisManager {
+private:
+    std::unique_ptr<SemanticAnalyzer> analyzer;
+    SemanticAnalyzer::AnalysisOptions options;
+    
+public:
+    SemanticAnalysisManager();
+    explicit SemanticAnalysisManager(const SemanticAnalyzer::AnalysisOptions& opts);
+    
+    auto analyzeProgram(ProgramNode& program, const ForthDictionary& dictionary) -> SemanticReport;
+    auto setOptions(const SemanticAnalyzer::AnalysisOptions& opts) -> void;
+    [[nodiscard]] auto getAnalyzer() -> SemanticAnalyzer* { return analyzer.get(); }
 };
 
 #endif // FORTH_SEMANTIC_ANALYZER_H

@@ -6,32 +6,56 @@
 #include <unordered_map>
 #include <vector>
 
+#include "parser/ast.h"
+#include "semantic/analyzer.h"
+#include "dictionary/dictionary.h"
+
 // Forward declarations for LLVM (to avoid including heavy headers in header file)
 namespace llvm {
     class LLVMContext;
     class Module;
-    class IRBuilder;
     class Function;
     class Value;
     class Type;
     class BasicBlock;
     class TargetMachine;
+    
+    // Template forward declaration for IRBuilder
+    template<typename T = void>
+    class IRBuilder;
+    
+    // Enum forward declarations
+    enum class BinaryOps;
+    enum class Predicate;
 }
 
-#include "parser/ast.h"
-#include "semantic/analyzer.h"
-#include "dictionary/dictionary.h"
+// Custom deleters for forward-declared LLVM types
+struct LLVMContextDeleter {
+    void operator()(llvm::LLVMContext* ptr);
+};
+
+struct ModuleDeleter {
+    void operator()(llvm::Module* ptr);
+};
+
+struct IRBuilderDeleter {
+    void operator()(llvm::IRBuilder<>* ptr);
+};
+
+struct TargetMachineDeleter {
+    void operator()(llvm::TargetMachine* ptr);
+};
 
 // LLVM code generation for FORTH
 class ForthLLVMCodegen : public ASTVisitor {
 private:
-    // LLVM core objects
-    std::unique_ptr<llvm::LLVMContext> context;
-    std::unique_ptr<llvm::Module> module;
-    std::unique_ptr<llvm::IRBuilder<>> builder;
+    // LLVM core objects with custom deleters
+    std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter> context;
+    std::unique_ptr<llvm::Module, ModuleDeleter> module;
+    std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter> builder;
     
     // Target configuration
-    std::unique_ptr<llvm::TargetMachine> targetMachine;
+    std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter> targetMachine;
     std::string targetTriple;
     
     // FORTH runtime state
@@ -66,28 +90,34 @@ public:
     explicit ForthLLVMCodegen(const std::string& moduleName = "forth_module");
     ~ForthLLVMCodegen();
     
+    // Move-only type (prevent copying due to unique_ptr with custom deleters)
+    ForthLLVMCodegen(const ForthLLVMCodegen&) = delete;
+    ForthLLVMCodegen& operator=(const ForthLLVMCodegen&) = delete;
+    ForthLLVMCodegen(ForthLLVMCodegen&&) = default;
+    ForthLLVMCodegen& operator=(ForthLLVMCodegen&&) = default;
+    
     // Configuration
     auto setTarget(const std::string& triple) -> void;
     auto setSemanticAnalyzer(const SemanticAnalyzer* sa) -> void { analyzer = sa; }
     auto setDictionary(const ForthDictionary* dict) -> void { dictionary = dict; }
     
     // Main code generation interface
-    auto generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module>;
+    auto generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module, ModuleDeleter>;
     auto generateFunction(const std::string& name, WordDefinitionNode& definition) -> llvm::Function*;
     
     // LLVM module management
     auto getModule() -> llvm::Module* { return module.get(); }
-    auto releaseModule() -> std::unique_ptr<llvm::Module> { return std::move(module); }
+    auto releaseModule() -> std::unique_ptr<llvm::Module, ModuleDeleter> { return std::move(module); }
     
     // Error handling
     [[nodiscard]] auto hasErrors() const -> bool { return !errors.empty(); }
     [[nodiscard]] auto getErrors() const -> const std::vector<std::string>& { return errors; }
     auto clearErrors() -> void { errors.clear(); }
     
-    // Output generation
-    auto emitLLVMIR(const std::string& filename = "") -> std::string;
-    auto emitAssembly(const std::string& filename = "") -> std::string;
-    auto emitObjectFile(const std::string& filename) -> bool;
+    // Output generation - Fixed const correctness
+    auto emitLLVMIR(const std::string& filename = "") const -> std::string;
+    auto emitAssembly(const std::string& filename = "") const -> std::string;
+    auto emitObjectFile(const std::string& filename) const -> bool;
     
     // Visitor pattern implementation
     void visit(ProgramNode& node) override;
@@ -113,10 +143,10 @@ private:
     auto generateStackSwap() -> void;
     auto generateStackDrop() -> void;
     
-    // Arithmetic operations
-    auto generateBinaryOp(llvm::Instruction::BinaryOps op) -> void;
+    // Arithmetic operations - Fixed parameter types
+    auto generateBinaryOp(int binaryOp) -> void;  // Use int instead of enum
     auto generateUnaryOp(const std::string& operation) -> void;
-    auto generateComparison(llvm::CmpInst::Predicate predicate) -> void;
+    auto generateComparison(int predicate) -> void;  // Use int instead of enum
     
     // Control flow generation
     auto generateIf(IfStatementNode& node) -> void;
@@ -159,7 +189,7 @@ private:
 namespace LLVMUtils {
     // Target configuration helpers
     [[nodiscard]] auto getXtensaTargetTriple() -> std::string;
-    [[nodiscard]] auto createXtensaTargetMachine() -> std::unique_ptr<llvm::TargetMachine>;
+    [[nodiscard]] auto createXtensaTargetMachine() -> std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>;
     
     // FORTH type helpers
     [[nodiscard]] auto getForthCellType(llvm::LLVMContext& context) -> llvm::Type*;
@@ -201,8 +231,14 @@ public:
     explicit ForthCompiler(const CodegenConfig& cfg);
     ~ForthCompiler();
     
+    // Move-only type
+    ForthCompiler(const ForthCompiler&) = delete;
+    ForthCompiler& operator=(const ForthCompiler&) = delete;
+    ForthCompiler(ForthCompiler&&) = default;
+    ForthCompiler& operator=(ForthCompiler&&) = default;
+    
     // Main compilation interface
-    auto compile(const std::string& forthCode) -> std::unique_ptr<llvm::Module>;
+    auto compile(const std::string& forthCode) -> std::unique_ptr<llvm::Module, ModuleDeleter>;
     auto compileToFile(const std::string& forthCode, const std::string& outputFile) -> bool;
     auto compileToObjectFile(const std::string& forthCode, const std::string& objectFile) -> bool;
     

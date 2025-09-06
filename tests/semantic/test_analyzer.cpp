@@ -1,4 +1,4 @@
-#include "test_framework.h"
+#include "../test_framework.h"
 #include "semantic/analyzer.h"
 #include "lexer/lexer.h"
 #include "parser/parser.h"
