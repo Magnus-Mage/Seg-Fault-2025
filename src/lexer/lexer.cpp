@@ -19,6 +19,9 @@ ForthLexer::ForthLexer()
         // Basic arithmetic
         "+", "-", "*", "/", "MOD", "ABS", "NEGATE", "MIN", "MAX",
         "1+", "1-", "2*", "2/",
+
+        // Comparison operations
+        "<", "<=", ">", ">=", "=", "<>", "0<", "0=", "0>",
         
         // Advanced math
         "SQRT", "SIN", "COS", "TAN", "ASIN", "ACOS", "ATAN", "ATAN2",

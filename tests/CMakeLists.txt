@@ -1,11 +1,15 @@
-# Find or download a simple testing framework (using built-in approach for now)
-add_executable(test_lexer
+add_executable(test_forth_compiler
     test_main.cpp
     lexer/test_lexer.cpp
+    parser/test_parser.cpp
     ../src/lexer/lexer.cpp
+    ../src/parser/ast.cpp
+    ../src/parser/parser.cpp
+    ../src/dictionary/dictionary.cpp
+
 )
 
-target_include_directories(test_lexer PRIVATE ../src)
+target_include_directories(test_forth_compiler PRIVATE ../src)
 
 # Add test
-add_test(NAME lexer_tests COMMAND test_lexer)
+add_test(NAME forth_compiler_tests COMMAND test_forth_compiler)

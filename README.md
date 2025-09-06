@@ -2,12 +2,12 @@
 
 A minimal FORTH compiler that generates ESP-IDF compatible C++ code for ESP32 microcontrollers.
 
-## Current Status: Phase 1 - Initial Setup
+## Current Status: Phase 3 - Parser Setup
 
 ### Features Implemented
 - [x] Project structure
-- [ ] Lexical analyzer
-- [ ] Parser
+- [x] Lexical analyzer
+- [x] Parser
 - [ ] Code generator
 - [ ] ESP32 integration
 
