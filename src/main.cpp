@@ -9,6 +9,8 @@
 #include "parser/parser.h"
 #include "parser/ast.h"
 #include "dictionary/dictionary.h"
+#include "semantic/analyzer.h"
+#include "codegen/llvm_backend.h"
 #include "common/utils.h"
 #include "functional"
 
@@ -45,6 +47,7 @@ auto printTokenizationResults(const std::vector<Token>& tokens, bool verbose) ->
               << std::setw(8) << "Column" << "\n";
     std::cout << std::string(48, '-') << "\n";
     
+    ForthLexer lexer; // Create instance for tokenTypeToString
     for (const auto& token : tokens) {
         if (token.type == TokenType::EOF_TOKEN) continue;
         
@@ -53,13 +56,13 @@ auto printTokenizationResults(const std::vector<Token>& tokens, bool verbose) ->
             displayValue = displayValue.substr(0, 15) + "...";
         }
         
-        std::cout << std::setw(12) << ForthLexer{}.tokenTypeToString(token.type)
+        std::cout << std::setw(12) << lexer.tokenTypeToString(token.type)
                   << std::setw(20) << ("'" + displayValue + "'")
                   << std::setw(8) << token.line
                   << std::setw(8) << token.column << "\n";
     }
     
-    std::cout << "\nTotal tokens: " << (tokens.size() - 1) << " (excluding EOF)\n"; // -1 for EOF
+    std::cout << "\nTotal tokens: " << (tokens.size() - 1) << " (excluding EOF)\n";
 }
 
 // AST visitor for printing the parse tree
@@ -176,6 +179,70 @@ auto printParseResults(ProgramNode& ast, bool verbose) -> void {
     }
 }
 
+auto printSemanticResults(const SemanticAnalyzer& analyzer, bool verbose) -> void {
+    std::cout << "\n" << std::string(60, '=') << "\n";
+    std::cout << "SEMANTIC ANALYSIS RESULTS\n";
+    std::cout << std::string(60, '=') << "\n";
+    
+    if (analyzer.hasErrors()) {
+        std::cout << "❌ Semantic Errors:\n";
+        for (const auto& error : analyzer.getErrors()) {
+            std::cout << "  • " << error << "\n";
+        }
+    }
+    
+    if (analyzer.hasWarnings()) {
+        std::cout << "⚠️  Semantic Warnings:\n";
+        for (const auto& warning : analyzer.getWarnings()) {
+            std::cout << "  • " << warning << "\n";
+        }
+    }
+    
+    if (!analyzer.hasErrors() && !analyzer.hasWarnings()) {
+        std::cout << "✅ No semantic issues found\n";
+    }
+    
+    std::cout << "\nStack Analysis:\n";
+    std::cout << "  Maximum stack depth: " << analyzer.getMaxStackDepth() << "\n";
+    std::cout << "  Minimum stack depth: " << analyzer.getMinStackDepth() << "\n";
+    
+    if (verbose) {
+        const auto& wordEffects = analyzer.getWordEffects();
+        if (!wordEffects.empty()) {
+            std::cout << "\nWord Stack Effects:\n";
+            for (const auto& [word, effect] : wordEffects) {
+                std::cout << "  " << word << ": (" 
+                         << effect.effect.consumed << " -> " 
+                         << effect.effect.produced << ")";
+                if (!effect.effect.isKnown) std::cout << " [unknown]";
+                std::cout << "\n";
+            }
+        }
+    }
+}
+
+auto printCodegenResults(const ForthLLVMCodegen& codegen, bool showIR) -> void {
+    std::cout << "\n" << std::string(60, '=') << "\n";
+    std::cout << "CODE GENERATION RESULTS\n";
+    std::cout << std::string(60, '=') << "\n";
+    
+    if (codegen.hasErrors()) {
+        std::cout << "❌ Code Generation Errors:\n";
+        for (const auto& error : codegen.getErrors()) {
+            std::cout << "  • " << error << "\n";
+        }
+    } else {
+        std::cout << "✅ Code generation completed successfully\n";
+        
+        if (showIR) {
+            std::cout << "\nGenerated LLVM IR:\n";
+            std::cout << std::string(40, '-') << "\n";
+            std::cout << codegen.emitLLVMIR() << "\n";
+            std::cout << std::string(40, '-') << "\n";
+        }
+    }
+}
+
 auto analyzeProgram(ProgramNode& ast, const ForthDictionary& dictionary) -> void {
     std::cout << "\n" << std::string(40, '=') << "\n";
     std::cout << "PROGRAM ANALYSIS\n";
@@ -223,29 +290,45 @@ auto analyzeProgram(ProgramNode& ast, const ForthDictionary& dictionary) -> void
 
 auto printStatistics(const std::vector<Token>& tokens, 
                     const high_resolution_clock::duration& lexDuration,
-                    const high_resolution_clock::duration& parseDuration) -> void {
+                    const high_resolution_clock::duration& parseDuration,
+                    const high_resolution_clock::duration& semanticDuration,
+                    const high_resolution_clock::duration& codegenDuration) -> void {
     std::cout << "\n" << std::string(40, '=') << "\n";
     std::cout << "PERFORMANCE STATISTICS\n";
     std::cout << std::string(40, '=') << "\n";
     
     const auto lexMs = duration_cast<microseconds>(lexDuration);
     const auto parseMs = duration_cast<microseconds>(parseDuration);
-    const auto totalMs = lexMs + parseMs;
+    const auto semanticMs = duration_cast<microseconds>(semanticDuration);
+    const auto codegenMs = duration_cast<microseconds>(codegenDuration);
+    const auto totalMs = lexMs + parseMs + semanticMs + codegenMs;
     
     std::cout << "Tokens processed:   " << (tokens.size() - 1) << "\n";
     std::cout << "Lexing time:        " << lexMs.count() << " μs\n";
     std::cout << "Parsing time:       " << parseMs.count() << " μs\n";
+    std::cout << "Semantic analysis:  " << semanticMs.count() << " μs\n";
+    std::cout << "Code generation:    " << codegenMs.count() << " μs\n";
     std::cout << "Total time:         " << totalMs.count() << " μs\n";
     
     if (tokens.size() > 1) {
         const auto tokensPerSecond = (tokens.size() - 1) * 1'000'000 / totalMs.count();
         std::cout << "Processing rate:    " << tokensPerSecond << " tokens/second\n";
     }
+    
+    std::cout << "\nPhase breakdown:\n";
+    std::cout << "  Lexing:      " << std::fixed << std::setprecision(1) 
+              << (100.0 * lexMs.count() / totalMs.count()) << "%\n";
+    std::cout << "  Parsing:     " << std::fixed << std::setprecision(1)
+              << (100.0 * parseMs.count() / totalMs.count()) << "%\n";
+    std::cout << "  Semantic:    " << std::fixed << std::setprecision(1)
+              << (100.0 * semanticMs.count() / totalMs.count()) << "%\n";
+    std::cout << "  Code Gen:    " << std::fixed << std::setprecision(1)
+              << (100.0 * codegenMs.count() / totalMs.count()) << "%\n";
 }
 
 auto main(int argc, char* argv[]) -> int {
-    std::cout << "FORTH-ESP32 Compiler v0.1.0\n";
-    std::cout << "Phase 3: Parser & AST Generation\n\n";
+    std::cout << "FORTH-ESP32 Compiler v0.2.0\n";
+    std::cout << "Phase 4: Semantic Analysis & LLVM Code Generation\n\n";
     
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <forth_file> [options]\n";
@@ -253,27 +336,48 @@ auto main(int argc, char* argv[]) -> int {
         std::cerr << "  -v, --verbose    Show detailed information\n";
         std::cerr << "  -t, --tokens     Show tokenization results\n";
         std::cerr << "  -a, --ast        Show AST structure\n";
+        std::cerr << "  -s, --semantic   Show semantic analysis details\n";
+        std::cerr << "  -c, --codegen    Show code generation details\n";
+        std::cerr << "  -i, --ir         Show generated LLVM IR\n";
         std::cerr << "  -d, --dict       Show dictionary contents\n";
-        std::cerr << "  -s, --stats      Show performance statistics\n";
+        std::cerr << "  --stats          Show performance statistics\n";
+        std::cerr << "  -o, --output     Output file for generated code\n";
+        std::cerr << "  --target         Target architecture (default: xtensa-esp32-elf)\n";
         return 1;
     }
     
     const std::string filename{argv[1]};
-    bool verbose = false, showTokens = false, showAST = false, showDict = false, showStats = false;
+    bool verbose = false, showTokens = false, showAST = false, showSemantic = false;
+    bool showCodegen = false, showIR = false, showDict = false, showStats = false;
+    std::string outputFile, target = "xtensa-esp32-elf";
     
     // Parse command line options
     for (int i = 2; i < argc; ++i) {
         const std::string arg{argv[i]};
         if (arg == "-v" || arg == "--verbose") {
-            verbose = showTokens = showAST = showDict = showStats = true;
+            verbose = showTokens = showAST = showSemantic = showCodegen = showDict = showStats = true;
         } else if (arg == "-t" || arg == "--tokens") {
             showTokens = true;
         } else if (arg == "-a" || arg == "--ast") {
             showAST = true;
+        } else if (arg == "-s" || arg == "--semantic") {
+            showSemantic = true;
+        } else if (arg == "-c" || arg == "--codegen") {
+            showCodegen = true;
+        } else if (arg == "-i" || arg == "--ir") {
+            showIR = true;
         } else if (arg == "-d" || arg == "--dict") {
             showDict = true;
-        } else if (arg == "-s" || arg == "--stats") {
+        } else if (arg == "--stats") {
             showStats = true;
+        } else if (arg == "-o" || arg == "--output") {
+            if (i + 1 < argc) {
+                outputFile = argv[++i];
+            }
+        } else if (arg == "--target") {
+            if (i + 1 < argc) {
+                target = argv[++i];
+            }
         }
     }
     
@@ -288,6 +392,7 @@ auto main(int argc, char* argv[]) -> int {
         }
         
         std::cout << "Source size: " << source.size() << " bytes\n";
+        std::cout << "Target: " << target << "\n";
         
         // Phase 1: Lexical Analysis
         ForthLexer lexer;
@@ -324,6 +429,44 @@ auto main(int argc, char* argv[]) -> int {
             printParseResults(*ast, showAST || verbose);
         }
         
+        // Phase 3: Semantic Analysis
+        SemanticAnalyzer analyzer(&parser.getDictionary());
+        const auto semanticStartTime = high_resolution_clock::now();
+        const bool semanticSuccess = analyzer.analyze(*ast);
+        const auto semanticEndTime = high_resolution_clock::now();
+        const auto semanticDuration = semanticEndTime - semanticStartTime;
+        
+        if (semanticSuccess) {
+            std::cout << "✅ Semantic analysis completed successfully\n";
+        } else {
+            std::cout << "⚠️  Semantic analysis completed with issues\n";
+        }
+        
+        if (showSemantic || verbose || analyzer.hasErrors() || analyzer.hasWarnings()) {
+            printSemanticResults(analyzer, showSemantic || verbose);
+        }
+        
+        // Phase 4: Code Generation
+        ForthLLVMCodegen codegen("forth_program");
+        codegen.setTarget(target);
+        codegen.setSemanticAnalyzer(&analyzer);
+        codegen.setDictionary(&parser.getDictionary());
+        
+        const auto codegenStartTime = high_resolution_clock::now();
+        auto llvmModule = codegen.generateModule(*ast);
+        const auto codegenEndTime = high_resolution_clock::now();
+        const auto codegenDuration = codegenEndTime - codegenStartTime;
+        
+        if (llvmModule && !codegen.hasErrors()) {
+            std::cout << "✅ Code generation completed successfully\n";
+        } else {
+            std::cout << "❌ Code generation failed\n";
+        }
+        
+        if (showCodegen || verbose || codegen.hasErrors()) {
+            printCodegenResults(codegen, showIR || verbose);
+        }
+        
         // Program analysis
         analyzeProgram(*ast, parser.getDictionary());
         
@@ -334,18 +477,122 @@ auto main(int argc, char* argv[]) -> int {
         
         // Performance statistics
         if (showStats || verbose) {
-            printStatistics(tokens, lexDuration, parseDuration);
+            printStatistics(tokens, lexDuration, parseDuration, semanticDuration, codegenDuration);
         }
         
+        // Generate output file if requested
+        if (!outputFile.empty() && llvmModule && !codegen.hasErrors()) {
+            std::cout << "\nGenerating output file: " << outputFile << "\n";
+            
+            if (outputFile.ends_with(".ll")) {
+                // Generate LLVM IR
+                auto ir = codegen.emitLLVMIR(outputFile);
+                if (!ir.empty()) {
+                    std::cout << "✅ LLVM IR written to " << outputFile << "\n";
+                } else {
+                    std::cout << "❌ Failed to write LLVM IR\n";
+                }
+            } else if (outputFile.ends_with(".s")) {
+                // Generate assembly
+                auto asm_code = codegen.emitAssembly(outputFile);
+                if (!asm_code.empty()) {
+                    std::cout << "✅ Assembly written to " << outputFile << "\n";
+                } else {
+                    std::cout << "❌ Failed to write assembly\n";
+                }
+            } else if (outputFile.ends_with(".o")) {
+                // Generate object file
+                if (codegen.emitObjectFile(outputFile)) {
+                    std::cout << "✅ Object file written to " << outputFile << "\n";
+                } else {
+                    std::cout << "❌ Failed to write object file\n";
+                }
+            } else {
+                // Default to LLVM IR
+                auto ir = codegen.emitLLVMIR(outputFile + ".ll");
+                if (!ir.empty()) {
+                    std::cout << "✅ LLVM IR written to " << outputFile << ".ll\n";
+                }
+            }
+        }
+        
+        // Final status report
         std::cout << "\n" << std::string(50, '-') << "\n";
-        std::cout << "✅ Phase 3 completed successfully!\n";
-        std::cout << "✅ AST generation working\n";
-        std::cout << "✅ Dictionary system functional\n";
-        std::cout << "✅ Error handling operational\n";
-        std::cout << "\n🚀 Ready for Phase 4: Semantic Analysis & Code Generation\n";
+        
+        bool hasErrors = parser.hasErrors() || 
+                        (analyzer.hasErrors() && !semanticSuccess) ||
+                        codegen.hasErrors();
+        
+        if (!hasErrors) {
+            std::cout << "🎉 Phase 4 completed successfully!\n";
+            std::cout << "✅ Lexical analysis working\n";
+            std::cout << "✅ Parser generating proper AST\n";
+            std::cout << "✅ Dictionary system functional\n";
+            std::cout << "✅ Semantic analysis operational\n";
+            std::cout << "✅ LLVM code generation working\n";
+            std::cout << "✅ Stack effect analysis functional\n";
+            std::cout << "✅ Error handling working\n";
+            
+            if (analyzer.hasWarnings()) {
+                std::cout << "⚠️  " << analyzer.getWarnings().size() << " warnings (non-critical)\n";
+            }
+            
+            std::cout << "\n🚀 Ready for Phase 5: ESP32 Integration & Optimization\n";
+        } else {
+            std::cout << "❌ Phase 4 completed with errors\n";
+            
+            int totalErrors = parser.getErrors().size() + 
+                            analyzer.getErrors().size() + 
+                            codegen.getErrors().size();
+            int totalWarnings = analyzer.getWarnings().size();
+            
+            std::cout << "Total errors: " << totalErrors << "\n";
+            std::cout << "Total warnings: " << totalWarnings << "\n";
+            std::cout << "\n🔧 Fix errors before proceeding to Phase 5\n";
+            
+            return 1;
+        }
+        
+        // Integration test if successful
+        if (!hasErrors && !outputFile.empty()) {
+            std::cout << "\n" << std::string(30, '=') << "\n";
+            std::cout << "INTEGRATION TEST SUMMARY\n";
+            std::cout << std::string(30, '=') << "\n";
+            
+            ForthCompiler compiler;
+            compiler.setTarget(target);
+            
+            try {
+                auto testModule = compiler.compile(source);
+                if (testModule) {
+                    std::cout << "✅ High-level compiler interface working\n";
+                    std::cout << "✅ Full compilation pipeline functional\n";
+                    
+                    if (compiler.analyzeStackEffects(source)) {
+                        std::cout << "✅ Stack effect analysis integration working\n";
+                    }
+                    
+                    auto irCode = compiler.generateLLVMIR(source);
+                    if (!irCode.empty()) {
+                        std::cout << "✅ IR generation via compiler interface working\n";
+                    }
+                } else {
+                    std::cout << "⚠️  High-level compiler interface has issues\n";
+                    auto errors = compiler.getAllErrors();
+                    for (const auto& error : errors) {
+                        std::cout << "  • " << error << "\n";
+                    }
+                }
+            } catch (const std::exception& e) {
+                std::cout << "❌ Integration test failed: " << e.what() << "\n";
+            }
+        }
         
     } catch (const std::exception& e) {
-        std::cerr << "❌ Error: " << e.what() << "\n";
+        std::cerr << "❌ Fatal error: " << e.what() << "\n";
+        return 1;
+    } catch (...) {
+        std::cerr << "❌ Unknown fatal error occurred\n";
         return 1;
     }
     
