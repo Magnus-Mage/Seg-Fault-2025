@@ -58,22 +58,103 @@ if(WITH_LLVM)
     message(STATUS "LLVM Include Dirs: ${LLVM_INCLUDE_DIRS}")
     message(STATUS "LLVM Library Dirs: ${LLVM_LIBRARY_DIRS}")
 
+    # Separate LLVM definitions to handle potential issues
+    separate_arguments(LLVM_DEFINITIONS_LIST UNIX_COMMAND "${LLVM_DEFINITIONS}")
+    
     include_directories(SYSTEM ${LLVM_INCLUDE_DIRS})
 
     target_include_directories(forth_compiler PRIVATE ${LLVM_INCLUDE_DIRS})
     target_link_directories(forth_compiler PRIVATE ${LLVM_LIBRARY_DIRS})
-    target_compile_definitions(forth_compiler PRIVATE ${LLVM_DEFINITIONS})
+    target_compile_definitions(forth_compiler PRIVATE ${LLVM_DEFINITIONS_LIST})
     target_compile_definitions(forth_compiler PRIVATE WITH_REAL_LLVM)
 
+    # LLVM 15 compatible component mapping
     if(COMMAND llvm_map_components_to_libnames)
+        # Updated components for LLVM 15
         llvm_map_components_to_libnames(llvm_libs
-            support core irreader bitwriter analysis
-            target transformutils codegen mc passes nativecodegen
+            # Core components
+            support 
+            core 
+            irreader 
+            bitwriter 
+            analysis
+            
+            # Target and code generation
+            target 
+            transformutils 
+            codegen 
+            
+            # Machine code components (important for LLVM 15)
+            mc 
+            mcparser
+            mcdisassembler
+            
+            # Optimization passes
+            passes 
+            
+            # Platform-specific codegen
+            nativecodegen
+            
+            # Additional useful components
+            ipo
+            instcombine
+            scalaropts
+            vectorize
+            objcarcopts
         )
+        
+        # Link LLVM libraries
         target_link_libraries(forth_compiler PRIVATE ${llvm_libs})
+        
+        message(STATUS "LLVM libraries: ${llvm_libs}")
     else()
-        message(WARNING "llvm_map_components_to_libnames() is not available. Manually specify LLVM libraries if needed.")
+        message(FATAL_ERROR "llvm_map_components_to_libnames() is not available. Please check LLVM installation.")
     endif()
+    
+    # Additional LLVM 15 specific settings
+    if(LLVM_PACKAGE_VERSION VERSION_GREATER_EQUAL "15.0")
+        message(STATUS "Configuring for LLVM 15+")
+        
+        # LLVM 15+ may require additional preprocessor definitions
+        target_compile_definitions(forth_compiler PRIVATE 
+            LLVM_DISABLE_ABI_BREAKING_CHECKS_ENFORCING=1
+        )
+        
+        # Ensure C++17 or higher (LLVM 15 requirement)
+        if(CMAKE_CXX_STANDARD LESS 17)
+            set_property(TARGET forth_compiler PROPERTY CXX_STANDARD 17)
+            message(STATUS "Updated C++ standard to C++17 for LLVM 15 compatibility")
+        endif()
+    endif()
+    
+    # Handle potential threading requirements
+    find_package(Threads REQUIRED)
+    target_link_libraries(forth_compiler PRIVATE Threads::Threads)
+    
+    # Handle potential zlib dependency
+    find_package(ZLIB)
+    if(ZLIB_FOUND)
+        target_link_libraries(forth_compiler PRIVATE ${ZLIB_LIBRARIES})
+    endif()
+    
+    # Handle potential terminfo/ncurses dependency on Linux
+    if(UNIX AND NOT APPLE)
+        find_library(TERMINFO_LIB tinfo)
+        if(TERMINFO_LIB)
+            target_link_libraries(forth_compiler PRIVATE ${TERMINFO_LIB})
+        else()
+            find_library(NCURSES_LIB ncurses)
+            if(NCURSES_LIB)
+                target_link_libraries(forth_compiler PRIVATE ${NCURSES_LIB})
+            endif()
+        endif()
+    endif()
+    
+    # Add dl library on Unix systems (for dynamic loading)
+    if(UNIX)
+        target_link_libraries(forth_compiler PRIVATE ${CMAKE_DL_LIBS})
+    endif()
+    
 endif()
 
 # === Testing ===
@@ -106,6 +187,10 @@ message(STATUS "Build type: ${CMAKE_BUILD_TYPE}")
 message(STATUS "C++ Standard: ${CMAKE_CXX_STANDARD}")
 message(STATUS "Tests: ${BUILD_TESTS}")
 message(STATUS "LLVM Backend: ${WITH_LLVM}")
+if(WITH_LLVM)
+    message(STATUS "LLVM Version: ${LLVM_PACKAGE_VERSION}")
+    message(STATUS "LLVM Definitions: ${LLVM_DEFINITIONS}")
+endif()
 message(STATUS "Debug Output: ${ENABLE_DEBUG}")
 message(STATUS "Compiler: ${CMAKE_CXX_COMPILER_ID} ${CMAKE_CXX_COMPILER_VERSION}")
 message(STATUS "===========================================")
@@ -131,3 +216,15 @@ add_custom_target(generate_examples
 
 add_dependencies(forth_compiler generate_examples)
 
+# === LLVM Debug Information ===
+if(WITH_LLVM AND CMAKE_BUILD_TYPE STREQUAL "Debug")
+    # Add debug target to show LLVM configuration
+    add_custom_target(llvm_debug_info
+        COMMAND ${CMAKE_COMMAND} -E echo "LLVM Configuration Debug Info:"
+        COMMAND ${CMAKE_COMMAND} -E echo "LLVM_VERSION: ${LLVM_PACKAGE_VERSION}"
+        COMMAND ${CMAKE_COMMAND} -E echo "LLVM_INCLUDE_DIRS: ${LLVM_INCLUDE_DIRS}"
+        COMMAND ${CMAKE_COMMAND} -E echo "LLVM_LIBRARY_DIRS: ${LLVM_LIBRARY_DIRS}"
+        COMMAND ${CMAKE_COMMAND} -E echo "LLVM_DEFINITIONS: ${LLVM_DEFINITIONS}"
+        COMMAND ${CMAKE_COMMAND} -E echo "LLVM_LIBS: ${llvm_libs}"
+        COMMENT "Display LLVM configuration information")
+endif()
