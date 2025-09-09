@@ -76,8 +76,8 @@ namespace llvm {
                 }
             }
             // Don't use make_unique - create raw pointer
-            auto* func = new Function(name, type);
-            functions.push_back(func);
+            auto* func = llvm::Function::Create(type, llvm::Function::ExternalLinkage, name, module);
+	    functions.push_back(func);
             return FunctionCallee(func);
         }
         
@@ -101,8 +101,16 @@ namespace llvm {
         auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes /* linkage */, 
                                 Constant* /* initializer */, const std::string& name) -> GlobalVariable* {
             // Don't use make_unique - create raw pointer
-            auto* global = new GlobalVariable("@" + name, type);
-            globals.push_back(global);
+            auto* global = new llvm::GlobalVariable(
+    		*module,                              // llvm::Module&
+ 		type,                                 // llvm::Type*
+  		false,                                // isConstant
+    		llvm::GlobalValue::ExternalLinkage,   // Linkage
+    		initializer,                          // llvm::Constant* or nullptr
+    		name                                  // llvm::Twine (name only, no '@')
+		);
+	    
+	    globals.push_back(global);
             
             irStream << "@" << name << " = ";
             if (isConstant) irStream << "constant ";
@@ -269,8 +277,8 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
 }
 
 auto ForthLLVMCodegen::setTarget(const std::string& triple) -> void {
-   targetTriple = triple;  // Store the string directly
-   module->setTargetTriple(triple);  // Use string directly, not Triple object
+   llvm::Triple llvmTriple(triple);  // Store the string directly
+   module->setTargetTriple(llvmTriple);  // Use string directly, not Triple object
 }
 
 auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module, ModuleDeleter> {
@@ -1182,7 +1190,8 @@ auto createXtensaTargetMachine() -> std::unique_ptr<llvm::TargetMachine, TargetM
 
     return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(tm);
 #else
-    return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(new llvm::TargetMachine());
+    
+    return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(targetMachine);
 #endif
 }
 
