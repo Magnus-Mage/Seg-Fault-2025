@@ -125,13 +125,16 @@ add_custom_target(clean_build
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
     COMMENT "Clean rebuild")
 
+# Fixed generate_examples target with proper escaping
 add_custom_target(generate_examples
     COMMAND ${CMAKE_COMMAND} -E make_directory ${CMAKE_BINARY_DIR}/examples
-    COMMAND ${CMAKE_COMMAND} -E echo ": HELLO .\\\" Hello, World!\\\" CR ;" > ${CMAKE_BINARY_DIR}/examples/hello.fth
-    COMMAND ${CMAKE_COMMAND} -E echo ": FACTORIAL DUP 1 <= IF DROP 1 ELSE DUP 1- FACTORIAL * THEN ;" > ${CMAKE_BINARY_DIR}/examples/factorial.fth
-    COMMAND ${CMAKE_COMMAND} -E echo ": BLINK 13 OUTPUT 1000 0 DO 13 HIGH 500 DELAY 13 LOW 500 DELAY LOOP ;" > ${CMAKE_BINARY_DIR}/examples/blink.fth
-    COMMAND ${CMAKE_COMMAND} -E echo ": TEMPERATURE-MONITOR BEGIN ADC-READ .\\\" Temperature: \\\" . .\\\" C\\\" CR 1000 DELAY AGAIN ;" > ${CMAKE_BINARY_DIR}/examples/temp_monitor.fth
     COMMENT "Generating example FORTH files")
+
+# Create example files with proper content
+file(WRITE ${CMAKE_BINARY_DIR}/examples/hello.fth ": HELLO .\" Hello, World!\" CR ;\n")
+file(WRITE ${CMAKE_BINARY_DIR}/examples/factorial.fth ": FACTORIAL DUP 1 <= IF DROP 1 ELSE DUP 1- FACTORIAL * THEN ;\n")
+file(WRITE ${CMAKE_BINARY_DIR}/examples/blink.fth ": BLINK 13 OUTPUT 1000 0 DO 13 HIGH 500 DELAY 13 LOW 500 DELAY LOOP ;\n")
+file(WRITE ${CMAKE_BINARY_DIR}/examples/temp_monitor.fth ": TEMPERATURE-MONITOR BEGIN ADC-READ .\" Temperature: \" . .\" C\" CR 1000 DELAY AGAIN ;\n")
 
 add_dependencies(forth_compiler generate_examples)
 
