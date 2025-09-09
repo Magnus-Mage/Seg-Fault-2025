@@ -49,6 +49,14 @@ struct TargetMachineDeleter {
 // LLVM code generation for FORTH
 class ForthLLVMCodegen : public ASTVisitor {
 private:
+
+    #ifdef WITH_REAL_LLVM
+    llvm::Function* stackPushFunc;
+    llvm::Function* stackPopFunc;
+    
+    auto createRuntimeHelpers() -> void;
+#endif
+
     // LLVM core objects with custom deleters
     std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter> context;
     std::unique_ptr<llvm::Module, ModuleDeleter> module;  
