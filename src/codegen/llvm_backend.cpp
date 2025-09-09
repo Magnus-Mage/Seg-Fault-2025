@@ -23,7 +23,7 @@
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/TargetParser/Host.h>
-#include <llvm/TargetParser/Triple.h>
+#include "llvm/TargetParser/Triple.h"
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -39,215 +39,49 @@
 #include <fstream>
 #include <string>
 
-#ifndef WITH_REAL_LLVM
-// Mock LLVM implementation for development and testing
 
+#ifndef WITH_REAL_LLVM
 namespace llvm {
     static int nextTempId = 0;
     
-    // Memory management for mock objects
-    static std::vector<std::unique_ptr<Value>> allocatedValues;
-    
-    // Forward declare all classes properly
-    //class LLVMContext {
-    //public:
-    //    LLVMContext() = default;
-    //    ~LLVMContext() = default;
-    //};
-    
-    //class Type {
-    //public:
-     //   Type() = default;
-     //   virtual ~Type() = default;
-    //    static Type* getInt32Ty(LLVMContext& context) {
-     //       static Type instance;
-    //        return &instance;
-    //    }
-    //    static Type* getVoidTy(LLVMContext& context) {
-    //        static Type instance;
-    //        return &instance;
-    //    }
-    //    static Type* getInt8PtrTy(LLVMContext& context) {
-    //        static Type instance;
-    //        return &instance;
-     //   }
-    //};
-    
-    // FIXED: Add ArrayType for mock implementation
-    //class ArrayType : public Type {
-    //public:
-    //    static ArrayType* get(Type* elementType, uint64_t numElements) {
-    //        static ArrayType instance;
-     //       return &instance;
-    //    }
-    //};
-    
-    //class Value {
-    //protected:
-    //    std::string name;
-    //    Type* type;
-    //public:
-    //    Value() : type(nullptr) {}
-    //    Value(const std::string& n, Type* t = nullptr) : name(n), type(t) {}
-     //   virtual ~Value() = default;
-    //    const std::string& getName() const { return name; }
-    //    Type* getType() const { return type; }
-    //    void setName(const std::string& n) { name = n; }
-    //};
-    
-    // FIXED: Add Constant hierarchy
-    //class Constant : public Value {
-    //public:
-    //    Constant(const std::string& n, Type* t = nullptr) : Value(n, t) {}
-    //};
-    
-    //class ConstantInt : public Constant {
-    //public:
-    //    ConstantInt(int value, Type* t) : Constant(std::to_string(value), t) {}
-    //    static ConstantInt* get(Type* type, int value) {
-    //        auto c = new ConstantInt(value, type);
-    //        allocatedValues.push_back(std::unique_ptr<Value>(c));
-    //        return c;
-     //   }
-    //};
-    
-    //class ConstantAggregateZero : public Constant {
-    //public:
-    /*    ConstantAggregateZero(Type* t) : Constant("zeroinitializer", t) {}
-        static ConstantAggregateZero* get(Type* type) {
-            auto c = new ConstantAggregateZero(type);
-            allocatedValues.push_back(std::unique_ptr<Value>(c));
-            return c;
-        }
-    };
-    
-    // FIXED: Add GlobalValue hierarchy
-    class GlobalValue : public Constant {
-    public:
-        enum LinkageTypes {
-            ExternalLinkage,
-            PrivateLinkage,
-            InternalLinkage
-        };
-        
-        GlobalValue(const std::string& n, Type* t) : Constant(n, t) {}
-    };
-    
-    class GlobalVariable : public GlobalValue {
-    public:
-        GlobalVariable(const std::string& name, Type* type) : GlobalValue(name, type) {}
-    };
-    
-    class BasicBlock : public Value {
-    private:
-        std::vector<std::string> instructions;
-        
-    public:
-        BasicBlock(const std::string& name, Type* t = nullptr) : Value(name, t) {}
-        virtual ~BasicBlock() = default;
-        
-        void addInstruction(const std::string& instr) {
-            instructions.push_back(instr);
-        }
-        
-        const std::vector<std::string>& getInstructions() const {
-            return instructions;
-        }
-        
-        // FIXED: Add Create method
-        static BasicBlock* Create(LLVMContext& context, const std::string& name, Function* parent = nullptr) {
-            return new BasicBlock(name);
-        }
-    };
-    
-    // FIXED: Add FunctionType
-    class FunctionType : public Type {
-    public:
-        static FunctionType* get(Type* returnType, std::vector<Type*> params, bool isVarArgs = false) {
-            static FunctionType instance;
-            return &instance;
-        }
-    };
-    
-    class Function : public GlobalValue {
-    private:
-        std::vector<std::unique_ptr<BasicBlock>> blocks;
-        std::vector<std::string> attributes;
-        std::vector<Value*> args;
-        
-    public:
-        Function(const std::string& name, Type* t = nullptr) : GlobalValue(name, t) {}
-        virtual ~Function() = default;
-        
-        // FIXED: Add Create method for LLVM 15 compatibility
-        static Function* Create(FunctionType* ty, LinkageTypes linkage, const std::string& name, Module* module = nullptr) {
-            return new Function(name, ty);
-        }
-        
-        auto createBasicBlock(const std::string& name) -> BasicBlock* {
-            blocks.push_back(std::make_unique<BasicBlock>(name));
-            return blocks.back().get();
-        }
-        
-        auto getBasicBlockList() -> std::vector<std::unique_ptr<BasicBlock>>& { 
-            return blocks; 
-        }
-        
-        void addAttribute(const std::string& attr) {
-            attributes.push_back(attr);
-        }
-        
-        const std::vector<std::string>& getAttributes() const {
-            return attributes;
-        }
-        
-        // FIXED: Add argument handling
-        Value* getArg(unsigned i) {
-            if (i < args.size()) return args[i];
-            return nullptr;
-        }
-    };
-    
-    // FIXED: Add FunctionCallee for LLVM 15 compatibility
-    class FunctionCallee {
-    private:
-        Function* func;
-    	FunctionType* funcType;    
-    public:
-    FunctionCallee(Function* f, FunctionType* ft = nullptr) : func(f), funcType(ft) {}
-        Function* getCallee() const { return func; }
-        FunctionType* getFunctionType() const { return funcType; }
-        operator Function*() const { return func; }
-    };*/
-    
     class Module {
     private:
-        std::vector<std::unique_ptr<Function>> functions;
-        std::vector<std::unique_ptr<GlobalVariable>> globals;
+        std::vector<Function*> functions;  // Use raw pointers instead of unique_ptr
+        std::vector<GlobalVariable*> globals;  // Use raw pointers instead of unique_ptr
         std::string targetTriple;
         std::string targetDataLayout;
         mutable std::stringstream irStream;
         
     public:
-        Module(const std::string& name, llvm::LLVMContext& context) {
+        Module(const std::string& name, llvm::LLVMContext& /* context */) {
             irStream << "; ModuleID = '" << name << "'\n";
             setTargetTriple("x86_64-unknown-linux-gnu");
         }
         
-        virtual ~Module() = default;
-        
-        // FIXED: Return FunctionCallee for LLVM 15 compatibility
-        auto getOrInsertFunction(const std::string& name, FunctionType* type) -> FunctionCallee {
-            for (auto& func : functions) {
-                if (func->getName() == name) {
-                    return FunctionCallee(func.get());
-                }
+        virtual ~Module() {
+            // Clean up raw pointers
+            for (auto* func : functions) {
+                delete func;
             }
-            functions.push_back(std::make_unique<Function>(name, type));
-            return FunctionCallee(functions.back().get());
+            for (auto* global : globals) {
+                delete global;
+            }
         }
         
-        auto getFunctionList() -> std::vector<std::unique_ptr<Function>>& { 
+        // Return FunctionCallee for LLVM 15 compatibility
+        auto getOrInsertFunction(const std::string& name, FunctionType* type) -> FunctionCallee {
+            for (auto* func : functions) {
+                if (func->getName() == name) {
+                    return FunctionCallee(func);
+                }
+            }
+            // Don't use make_unique - create raw pointer
+            auto* func = new Function(name, type);
+            functions.push_back(func);
+            return FunctionCallee(func);
+        }
+        
+        auto getFunctionList() -> std::vector<Function*>& { 
             return functions; 
         }
         
@@ -263,26 +97,22 @@ namespace llvm {
             return targetTriple;
         }
         
-        // FIXED: Create GlobalVariable properly
-        auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes linkage, 
-                                Constant* initializer, const std::string& name) -> GlobalVariable* {
-        #ifdef WITH_REAL_LLVM
-    	    return new GlobalVariable(*this, type, isConstant, linkage, initializer, name);
-        #else
-		
-	    auto global = std::make_unique<GlobalVariable>("@" + name, type);
-            auto ptr = global.get();
-            globals.push_back(std::move(global));
+        // Create GlobalVariable properly without make_unique
+        auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes /* linkage */, 
+                                Constant* /* initializer */, const std::string& name) -> GlobalVariable* {
+            // Don't use make_unique - create raw pointer
+            auto* global = new GlobalVariable("@" + name, type);
+            globals.push_back(global);
             
             irStream << "@" << name << " = ";
             if (isConstant) irStream << "constant ";
             else irStream << "global ";
             irStream << "i32 0\n";
             
-            return ptr;
-	#endif
+            return global;
         }
         
+        // Rest of the Module methods remain the same...
         auto print(std::ostream& os) const -> void {
             // Print module header
             os << irStream.str();
@@ -293,7 +123,7 @@ namespace llvm {
             os << "declare void @exit(i32)\n\n";
             
             // Print functions
-            for (const auto& func : functions) {
+            for (const auto* func : functions) {
                 os << "define ";
                 if (func->getType() == Type::getVoidTy(*static_cast<LLVMContext*>(nullptr))) {
                     os << "void";
@@ -301,19 +131,6 @@ namespace llvm {
                     os << "i32";
                 }
                 os << " @" << func->getName().data() << "() {\n";
-                
-                // Print basic blocks
-                for (const llvm::BasicBlock &bb : *func) {
-                    os << bb.getName().data() << ":\n";
-      	            for (const llvm::Instruction &instr : bb) {
-			    std::string instr_str;
-			    llvm::raw_string_ostream r_str_os(instr_str);
-			    instr.print(r_str_os);
-			    r_str_os.flush();
-
-    			    os << "  " << instr_str << "\n";
-			}
-		}
                 os << "}\n\n";
             }
         }
@@ -324,278 +141,8 @@ namespace llvm {
             return ss.str();
         }
     };
-    
-    // FIXED: Use proper template signature for IRBuilder
-    /*
-    template<typename T = void>
-    class IRBuilder {
-    private:
-        Module* module;
-        BasicBlock* currentBlock;
-        LLVMContext* context;
-        
-        // Helper to create managed values
-        Value* createManagedValue(const std::string& name, Type* type = nullptr) {
-            allocatedValues.push_back(std::make_unique<Value>(name, type));
-            return allocatedValues.back().get();
-        }
-        
-    public:
-        // FIX - Real LLVM 15:
-	#ifdef WITH_REAL_LLVM
-	IRBuilder(LLVMContext& ctx) : llvm::IRBuilder<>(ctx), module(nullptr), currentBlock(nullptr) {}
-	#else
-	// Keep mock implementation
-	IRBuilder(LLVMContext& ctx) : module(nullptr), currentBlock(nullptr), context(&ctx) {}
-	#endif
-
-	IRBuilder(Module* mod) : module(mod), currentBlock(nullptr), context(nullptr) {}
-        
-        auto GetInsertBlock() -> BasicBlock* { return currentBlock; }
-        
-        auto SetInsertPoint(BasicBlock* block) -> void {
-            currentBlock = block;
-        }
-        
-        auto CreateAlloca(Type* type, Value* arraySize = nullptr, const std::string& name = "") -> Value* {
-            std::string varName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto var = createManagedValue(varName, type);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(varName + " = alloca i32");
-            }
-            
-            return var;
-        }
-        
-        auto CreateLoad(Type* type, Value* ptr, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName, type);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = load i32, i32* " + ptr->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateStore(Value* val, Value* ptr) -> void {
-            if (currentBlock) {
-                currentBlock->addInstruction("store i32 " + val->getName() + ", i32* " + ptr->getName());
-            }
-        }
-        
-        auto CreateAdd(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = add i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateSub(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = sub i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateMul(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = mul i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateSDiv(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = sdiv i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateICmpSLT(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = icmp slt i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateICmpSGT(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = icmp sgt i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateICmpEQ(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = icmp eq i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        // FIXED: Add missing comparison operations
-        auto CreateICmpSLE(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = icmp sle i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateICmpSGE(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = icmp sge i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateICmpNE(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = icmp ne i32 " + lhs->getName() + ", " + rhs->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateSelect(Value* cond, Value* trueVal, Value* falseVal, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                currentBlock->addInstruction(resultName + " = select i1 " + cond->getName() + 
-                                           ", i32 " + trueVal->getName() + 
-                                           ", i32 " + falseVal->getName());
-            }
-            
-            return result;
-        }
-        
-        auto CreateCondBr(Value* cond, BasicBlock* trueBlock, BasicBlock* falseBlock) -> void {
-            if (currentBlock) {
-                currentBlock->addInstruction("br i1 " + cond->getName() + 
-                                           ", label %" + trueBlock->getName() + 
-                                           ", label %" + falseBlock->getName());
-            }
-        }
-        
-        auto CreateBr(BasicBlock* block) -> void {
-            if (currentBlock) {
-                currentBlock->addInstruction("br label %" + block->getName());
-            }
-        }
-        
-        auto CreateRet(Value* val = nullptr) -> void {
-            if (currentBlock) {
-                if (val) {
-                    currentBlock->addInstruction("ret i32 " + val->getName());
-                } else {
-                    currentBlock->addInstruction("ret void");
-                }
-            }
-        }
-        
-        auto CreateRetVoid() -> void {
-            CreateRet();
-        }
-        
-        auto CreateCall(Function* func, std::vector<Value*> args = {}, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                std::string call = "call void @" + func->getName() + "()";
-                currentBlock->addInstruction(call);
-            }
-            
-            return result;
-        }
-        
-        auto getInt32(int value) -> Value* {
-            return createManagedValue(std::to_string(value));
-        }
-        
-        auto CreateGlobalStringPtr(const std::string& str, const std::string& name = "") -> Value* {
-            std::string globalName = name.empty() ? ("str" + std::to_string(nextTempId++)) : name;
-            return createManagedValue("@" + globalName);
-        }
-        
-        // FIXED: Add missing GEP method
-        auto CreateInBoundsGEP(Type* type, Value* ptr, std::vector<Value*> indices, const std::string& name = "") -> Value* {
-            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
-            auto result = createManagedValue(resultName);
-            
-            if (currentBlock) {
-                std::string gep = resultName + " = getelementptr inbounds " + ptr->getName();
-                currentBlock->addInstruction(gep);
-            }
-            
-            return result;
-        }
-    };
-    */
-    
-    class TargetMachine {
-    public:
-        TargetMachine() = default;
-        virtual ~TargetMachine() = default;
-        auto getTargetTriple() -> std::string { return "xtensa-esp32-elf"; }
-    };
-    
-    // Instruction types for compatibility
-    /*
-    namespace Instruction {
-        enum BinaryOps {
-            Add, Sub, Mul, UDiv, SDiv
-        };
-    }
-    
-    namespace CmpInst {
-        enum Predicate {
-            ICMP_EQ, ICMP_NE, ICMP_UGT, ICMP_UGE, ICMP_ULT, ICMP_ULE,
-            ICMP_SGT, ICMP_SGE, ICMP_SLT, ICMP_SLE
-        };
-    }*/
 }
-#endif // WITH_REAL_LLVM
+#endif
 
 // ForthLLVMCodegen Implementation
 ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName) 
@@ -722,8 +269,8 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
 }
 
 auto ForthLLVMCodegen::setTarget(const std::string& triple) -> void {
-   auto targetTriple = llvm::Triple(triple);
-   module->setTargetTriple(targetTriple);
+   targetTriple = triple;  // Store the string directly
+   module->setTargetTriple(triple);  // Use string directly, not Triple object
 }
 
 auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module, ModuleDeleter> {
@@ -814,7 +361,8 @@ void ForthLLVMCodegen::visit(ProgramNode& node) {
 #ifdef WITH_REAL_LLVM
     currentFunction = llvm::cast<llvm::Function>(mainFuncCallee.getCallee());
 #else
-    currentFunction = static_cast<llvm::Function*>(mainFuncCallee);
+    // For mock implementation, cast Value* to Function*
+    currentFunction = static_cast<llvm::Function*>(mainFuncCallee.getCallee());
 #endif
     
     auto entryBlock = llvm::BasicBlock::Create(*context, "entry", currentFunction);
@@ -969,10 +517,9 @@ auto ForthLLVMCodegen::generateStackPush(llvm::Value* value) -> void {
     // Call the runtime helper function
     builder->CreateCall(stackPushFunc, {value});
 #else
-    // Mock implementation - just store to a global
-    if (currentFunction && builder->GetInsertBlock()) {
-        builder->GetInsertBlock()->addInstruction("call void @forth_stack_push(i32 " + value->getName() + ")");
-    }
+    // Mock implementation - don't use addInstruction
+    (void)value; // Suppress unused parameter warning
+    // In mock mode, we would generate a call instruction here
 #endif
 }
 
@@ -980,16 +527,12 @@ auto ForthLLVMCodegen::generateStackPop() -> llvm::Value* {
 #ifdef WITH_REAL_LLVM
     return builder->CreateCall(stackPopFunc, {}, "popped");
 #else
-    // Mock implementation
-    auto result = builder->getInt32(0);  // Simplified
-    if (currentFunction && builder->GetInsertBlock()) {
-        builder->GetInsertBlock()->addInstruction("%popped = call i32 @forth_stack_pop()");
-    }
+    // Mock implementation - return a dummy value
+    auto result = builder->getInt32(0);
     return result;
 #endif
 }
 
-// Continue with remaining methods...
 auto ForthLLVMCodegen::generateBinaryOp(int binaryOp) -> void {
     auto b = generateStackPop();  // Second operand
     auto a = generateStackPop();  // First operand
@@ -1130,7 +673,8 @@ auto ForthLLVMCodegen::createWordFunction(const std::string& name) -> llvm::Func
 #ifdef WITH_REAL_LLVM
     return llvm::cast<llvm::Function>(funcCallee.getCallee());
 #else
-    return static_cast<llvm::Function*>(funcCallee);
+    // For mock implementation, cast Value* to Function*
+    return static_cast<llvm::Function*>(funcCallee.getCallee());
 #endif
 }
 
@@ -1182,6 +726,7 @@ auto ForthLLVMCodegen::generateUnaryOp(const std::string& operation) -> void {
 #ifdef WITH_REAL_LLVM
         result = builder->CreateSelect(isNegative, negated, value);
 #else
+        (void)isNegative; // Suppress unused variable warning
         result = negated; // Simplified
 #endif
     } else if (operation == "DUP") {
@@ -1201,13 +746,15 @@ auto ForthLLVMCodegen::generateUnaryOp(const std::string& operation) -> void {
 auto ForthLLVMCodegen::generateVariableDeclaration(const std::string& name) -> void {
 #ifdef WITH_REAL_LLVM
     auto zero = llvm::ConstantInt::get(cellType, 0);
-    auto var = new llvm::GlobalVariable(cellType, false, 
+    auto var = new llvm::GlobalVariable(*module, cellType, false, 
                                           llvm::GlobalValue::PrivateLinkage, 
                                           zero, name);
     variables[name] = var;
 #else
-    // Mock implementation
-    auto var = new llvm::GlobalVariable(name, cellType);
+    // Mock implementation - create a proper mock GlobalVariable
+    auto var = module->createGlobalVariable(cellType, false,
+                                           llvm::GlobalValue::PrivateLinkage,
+                                           nullptr, name);
     variables[name] = var;
 #endif
 }
