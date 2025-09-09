@@ -46,71 +46,71 @@ namespace llvm {
     static std::vector<std::unique_ptr<Value>> allocatedValues;
     
     // Forward declare all classes properly
-    class LLVMContext {
-    public:
-        LLVMContext() = default;
-        ~LLVMContext() = default;
-    };
+    //class LLVMContext {
+    //public:
+    //    LLVMContext() = default;
+    //    ~LLVMContext() = default;
+    //};
     
-    class Type {
-    public:
-        Type() = default;
-        virtual ~Type() = default;
-        static Type* getInt32Ty(LLVMContext& context) {
-            static Type instance;
-            return &instance;
-        }
-        static Type* getVoidTy(LLVMContext& context) {
-            static Type instance;
-            return &instance;
-        }
-        static Type* getInt8PtrTy(LLVMContext& context) {
-            static Type instance;
-            return &instance;
-        }
-    };
+    //class Type {
+    //public:
+     //   Type() = default;
+     //   virtual ~Type() = default;
+    //    static Type* getInt32Ty(LLVMContext& context) {
+     //       static Type instance;
+    //        return &instance;
+    //    }
+    //    static Type* getVoidTy(LLVMContext& context) {
+    //        static Type instance;
+    //        return &instance;
+    //    }
+    //    static Type* getInt8PtrTy(LLVMContext& context) {
+    //        static Type instance;
+    //        return &instance;
+     //   }
+    //};
     
     // FIXED: Add ArrayType for mock implementation
-    class ArrayType : public Type {
-    public:
-        static ArrayType* get(Type* elementType, uint64_t numElements) {
-            static ArrayType instance;
-            return &instance;
-        }
-    };
+    //class ArrayType : public Type {
+    //public:
+    //    static ArrayType* get(Type* elementType, uint64_t numElements) {
+    //        static ArrayType instance;
+     //       return &instance;
+    //    }
+    //};
     
-    class Value {
-    protected:
-        std::string name;
-        Type* type;
-    public:
-        Value() : type(nullptr) {}
-        Value(const std::string& n, Type* t = nullptr) : name(n), type(t) {}
-        virtual ~Value() = default;
-        const std::string& getName() const { return name; }
-        Type* getType() const { return type; }
-        void setName(const std::string& n) { name = n; }
-    };
+    //class Value {
+    //protected:
+    //    std::string name;
+    //    Type* type;
+    //public:
+    //    Value() : type(nullptr) {}
+    //    Value(const std::string& n, Type* t = nullptr) : name(n), type(t) {}
+     //   virtual ~Value() = default;
+    //    const std::string& getName() const { return name; }
+    //    Type* getType() const { return type; }
+    //    void setName(const std::string& n) { name = n; }
+    //};
     
     // FIXED: Add Constant hierarchy
-    class Constant : public Value {
-    public:
-        Constant(const std::string& n, Type* t = nullptr) : Value(n, t) {}
-    };
+    //class Constant : public Value {
+    //public:
+    //    Constant(const std::string& n, Type* t = nullptr) : Value(n, t) {}
+    //};
     
-    class ConstantInt : public Constant {
-    public:
-        ConstantInt(int value, Type* t) : Constant(std::to_string(value), t) {}
-        static ConstantInt* get(Type* type, int value) {
-            auto c = new ConstantInt(value, type);
-            allocatedValues.push_back(std::unique_ptr<Value>(c));
-            return c;
-        }
-    };
+    //class ConstantInt : public Constant {
+    //public:
+    //    ConstantInt(int value, Type* t) : Constant(std::to_string(value), t) {}
+    //    static ConstantInt* get(Type* type, int value) {
+    //        auto c = new ConstantInt(value, type);
+    //        allocatedValues.push_back(std::unique_ptr<Value>(c));
+    //        return c;
+     //   }
+    //};
     
-    class ConstantAggregateZero : public Constant {
-    public:
-        ConstantAggregateZero(Type* t) : Constant("zeroinitializer", t) {}
+    //class ConstantAggregateZero : public Constant {
+    //public:
+    /*    ConstantAggregateZero(Type* t) : Constant("zeroinitializer", t) {}
         static ConstantAggregateZero* get(Type* type) {
             auto c = new ConstantAggregateZero(type);
             allocatedValues.push_back(std::unique_ptr<Value>(c));
@@ -215,7 +215,7 @@ namespace llvm {
         Function* getCallee() const { return func; }
         FunctionType* getFunctionType() const { return funcType; }
         operator Function*() const { return func; }
-    };
+    };*/
     
     class Module {
     private:
@@ -263,8 +263,6 @@ namespace llvm {
         // FIXED: Create GlobalVariable properly
         auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes linkage, 
                                 Constant* initializer, const std::string& name) -> GlobalVariable* {
-            auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes linkage, 
-            Constant* initializer, const std::string& name) -> GlobalVariable* {
         #ifdef WITH_REAL_LLVM
     	    return new GlobalVariable(*this, type, isConstant, linkage, initializer, name);
         #else
@@ -299,12 +297,12 @@ namespace llvm {
                 } else {
                     os << "i32";
                 }
-                os << " @" << func->getName() << "() {\n";
+                os << " @" << func->getName().data() << "() {\n";
                 
                 // Print basic blocks
-                for (const auto& bb : func->getBasicBlockList()) {
-                    os << bb->getName() << ":\n";
-                    for (const auto& instr : bb->getInstructions()) {
+                for (const llvm::BasicBlock &bb : *func) {
+                    os << bb.getName().data() << ":\n";
+                    for (const llvm::Instruction &instr : bb) {
                         os << "  " << instr << "\n";
                     }
                 }
@@ -629,18 +627,18 @@ ForthLLVMCodegen::~ForthLLVMCodegen() = default;
 auto ForthLLVMCodegen::initializeLLVM() -> void {
 #ifdef WITH_REAL_LLVM
     // Initialize LLVM targets
-    llvm::InitializeAllTargetInfos();
-    llvm::InitializeAllTargets();
-    llvm::InitializeAllTargetMCs();
-    llvm::InitializeAllAsmParsers();
-    llvm::InitializeAllAsmPrinters();
+    //llvm::InitializeAllTargetInfos();
+    //llvm::InitializeAllTargets();
+    //llvm::InitializeAllTargetMCs();
+    //llvm::InitializeAllAsmParsers();
+    //llvm::InitializeAllAsmPrinters();
     
     // Set up types
     cellType = llvm::Type::getInt32Ty(*context);
     stackType = llvm::ArrayType::get(cellType, 256); // Real array type
     
     // Set module target
-    module->setTargetTriple(targetTriple);
+    module->setTargetTriple(llvm::Triple(targetTriple));
     module->setDataLayout("e-m:e-p:32:32-i1:8:32-i8:8:32-i16:16:32-i64:64-f128:128-a:0:32-n32-S128");
 
     // CRITICAL: Handle opaque pointers
@@ -700,7 +698,7 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
 
 auto ForthLLVMCodegen::setTarget(const std::string& triple) -> void {
     targetTriple = triple;
-    module->setTargetTriple(triple);
+    module->setTargetTriple(llvm::Triple(triple));
 }
 
 auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module, ModuleDeleter> {
@@ -876,8 +874,8 @@ void ForthLLVMCodegen::visit(StringLiteralNode& node) {
     if (node.isPrint()) {
         generatePrintString(node.getValue());
     } else {
-        auto stringPtr = builder->CreateGlobalStringPtr(node.getValue());
-        auto length = builder->getInt32(static_cast<int>(node.getValue().length()));
+        auto stringPtr = builder->CreateGlobalString(node.getValue(), "str");
+	auto length = builder->getInt32(static_cast<int>(node.getValue().length()));
         
         generateStackPush(stringPtr);
         generateStackPush(length);
@@ -1121,6 +1119,7 @@ auto ForthLLVMCodegen::generateBuiltinCall(const std::string& wordName) -> void 
         generateStackSwap();
     } else if (wordName == ".") {
         auto value = generateStackPop();
+	(void)value;
         // In real implementation, would call printf
     } else {
         addError("Unknown builtin word: " + wordName);
@@ -1305,8 +1304,8 @@ auto ForthLLVMCodegen::emitObjectFile(const std::string& filename) const -> bool
     }
     
     llvm::legacy::PassManager pass;
-    auto fileType = llvm::CGFT_ObjectFile;
-    
+    auto fileType = llvm::CodeGenFileType::ObjectFile;
+
     if (targetMachine->addPassesToEmitFile(pass, dest, nullptr, fileType)) {
         addError("TargetMachine can't emit object file");
         return false;
@@ -1367,7 +1366,7 @@ auto ForthLLVMCodegen::generateStore(llvm::Value* address, llvm::Value* value) -
 }
 
 auto ForthLLVMCodegen::createStringConstant(const std::string& str) -> llvm::Value* {
-    return builder->CreateGlobalStringPtr(str);
+    return builder->CreateGlobalString(str, "str");
 }
 
 auto ForthLLVMCodegen::generateWordCall(const std::string& wordName) -> void {
@@ -1413,6 +1412,7 @@ auto ForthLLVMCodegen::generateBuiltinStackOp(const std::string& op) -> void {
 auto ForthLLVMCodegen::generateBuiltinIOOp(const std::string& op) -> void {
     if (op == ".") {
         auto value = generateStackPop();
+	(void)value;
         // In real implementation, would generate printf call
     }
 }
@@ -1605,7 +1605,9 @@ auto createXtensaTargetMachine() -> std::unique_ptr<llvm::TargetMachine, TargetM
     }
     
     llvm::TargetOptions opt;
-    auto tm = target->createTargetMachine("xtensa-esp32-elf", "generic", "", opt, llvm::Reloc::PIC_);
+    llvm::Triple triple("xtensa-esp32-elf");
+    auto tm = target->createTargetMachine(triple, "generic", "", opt, llvm::Reloc::PIC_);
+
     return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(tm);
 #else
     return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(new llvm::TargetMachine());

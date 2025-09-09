@@ -72,43 +72,21 @@ if(WITH_LLVM)
     if(COMMAND llvm_map_components_to_libnames)
         # Updated components for LLVM 15
         llvm_map_components_to_libnames(llvm_libs
-            # Core components
-            support 
-            core 
-            irreader 
-            bitwriter 
-            analysis
-            
-            # Target and code generation
-            target 
-            transformutils 
-            codegen 
-            
-            # Machine code components (important for LLVM 15)
-            mc 
-            mcparser
-            mcdisassembler
-            
-            # Optimization passes
-            passes 
-            
-            # Platform-specific codegen
-	    # nativecodegen
-            
-            # Additional useful components
-            ipo
-            instcombine
-            scalaropts
-            vectorize
-            objcarcopts
-	    bitreader
-
-	    # x86 related passes
-	    x86codegen
-	    x86asmprinter
-  	    x86asmparser
-
-
+		# Core components only - no target-specific components
+    		support
+    		core
+    		irreader
+    		bitwriter
+    		analysis
+    		target
+    		transformutils
+   		mc
+    		passes
+    		ipo
+    		instcombine
+    		scalaropts
+    		vectorize
+    		bitreader
         )
         
         # Link LLVM libraries
