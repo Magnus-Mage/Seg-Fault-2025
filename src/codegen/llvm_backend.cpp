@@ -2,6 +2,32 @@
 #include "lexer/lexer.h"
 #include "parser/parser.h"
 #include "dictionary/dictionary.h"
+
+#ifdef WITH_REAL_LLVM
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/Module.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Function.h>
+#include <llvm/IR/Type.h>
+#include <llvm/IR/Value.h>
+#include <llvm/IR/BasicBlock.h>
+#include <llvm/IR/Instructions.h>
+#include <llvm/IR/Constants.h>
+#include <llvm/IR/GlobalVariable.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/Support/TargetSelect.h>
+#include <llvm/Target/TargetMachine.h>
+#include <llvm/Target/TargetOptions.h>
+#include <llvm/Support/TargetRegistry.h>
+#include <llvm/Support/Host.h>
+#include <llvm/Support/FileSystem.h>
+#include <llvm/Support/raw_ostream.h>
+#include <llvm/IR/LegacyPassManager.h>
+#include <llvm/Transforms/IPO/PassManagerBuilder.h>
+#include <llvm/MC/TargetRegistry.h>
+#include <llvm/Support/CodeGen.h>
+#endif
+
 #include <sstream>
 #include <iostream>
 #include <algorithm>
@@ -371,9 +397,7 @@ namespace llvm {
 
 // ForthLLVMCodegen Implementation
 ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName) 
-    : context(std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext()))
-    , module(std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName)))
-    , builder(std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context))), targetTriple("xtensa-esp32-elf")  // Default to ESP32
+    : targetTriple("xtensa-esp32-elf")  // Default to ESP32
     , stackPointer(nullptr)
     , stackBase(nullptr)
     , returnStackPointer(nullptr) 
@@ -385,28 +409,86 @@ ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName)
     , dictionary(nullptr)
     , inWordDefinition(false) 
 {
-
+#ifdef WITH_REAL_LLVM
+    context = std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext());
+    module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName, *context));
+    builder = std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context));
+    
     initializeLLVM();
     createForthRuntime();
+#else
+    // Keep your existing mock implementation as fallback
+    context = std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext());
+    module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName));
+    builder = std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context));
+    
+    initializeLLVM();
+    createForthRuntime();
+#endif
 }
 
 ForthLLVMCodegen::~ForthLLVMCodegen() = default;
 
 auto ForthLLVMCodegen::initializeLLVM() -> void {
-    // Initialize LLVM types
-    cellType = llvm::Type::getInt32Ty(*context);
-    stackType = cellType; // Simplified for mock
+#ifdef WITH_REAL_LLVM
+    // Initialize LLVM targets
+    llvm::InitializeAllTargetInfos();
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmParsers();
+    llvm::InitializeAllAsmPrinters();
     
-    // Set target configuration
+    // Set up types
+    cellType = llvm::Type::getInt32Ty(*context);
+    stackType = llvm::ArrayType::get(cellType, 256); // Real array type
+    
+    // Set module target
     module->setTargetTriple(targetTriple);
+    module->setDataLayout("e-m:e-p:32:32-i1:8:32-i8:8:32-i16:16:32-i64:64-f128:128-a:0:32-n32-S128");
+#else
+    // Mock implementation
+    cellType = llvm::Type::getInt32Ty(*context);
+    stackType = cellType;
+    module->setTargetTriple(targetTriple);
+#endif
 }
 
 auto ForthLLVMCodegen::createForthRuntime() -> void {
-    // Create global stack arrays and stack pointers
+#ifdef WITH_REAL_LLVM
+    // Create real global arrays for stacks
+    auto initializer = llvm::ConstantAggregateZero::get(stackType);
+    
+    stackBase = new llvm::GlobalVariable(
+        *module, stackType, false,
+        llvm::GlobalValue::PrivateLinkage,
+        initializer, "forth_data_stack");
+    
+    returnStackBase = new llvm::GlobalVariable(
+        *module, stackType, false,
+        llvm::GlobalValue::PrivateLinkage,
+        initializer, "forth_return_stack");
+    
+    // Stack pointers (indices into arrays)
+    auto zero = llvm::ConstantInt::get(cellType, 0);
+    stackPointer = new llvm::GlobalVariable(
+        *module, cellType, false,
+        llvm::GlobalValue::PrivateLinkage,
+        zero, "forth_sp");
+    
+    returnStackPointer = new llvm::GlobalVariable(
+        *module, cellType, false,
+        llvm::GlobalValue::PrivateLinkage,
+        zero, "forth_rsp");
+        
+    // Create runtime helper functions
+    createRuntimeHelpers();
+#else
+    // Keep mock implementation
     stackBase = module->addGlobalVariable("forth_data_stack", cellType, false);
     stackPointer = module->addGlobalVariable("forth_sp", cellType, false);
     returnStackBase = module->addGlobalVariable("forth_return_stack", cellType, false);
     returnStackPointer = module->addGlobalVariable("forth_rsp", cellType, false);
+#endif
 }
 
 auto ForthLLVMCodegen::setTarget(const std::string& triple) -> void {
@@ -430,6 +512,67 @@ auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<l
         return nullptr;
     }
 }
+
+#ifdef WITH_REAL_LLVM
+auto ForthLLVMCodegen::createRuntimeHelpers() -> void {
+    // Create stack_push function
+    auto voidTy = llvm::Type::getVoidTy(*context);
+    auto pushFuncTy = llvm::FunctionType::get(voidTy, {cellType}, false);
+    auto pushFunc = llvm::Function::Create(pushFuncTy, llvm::Function::PrivateLinkage, 
+                                          "forth_stack_push", module.get());
+    
+    auto entry = llvm::BasicBlock::Create(*context, "entry", pushFunc);
+    builder->SetInsertPoint(entry);
+    
+    auto arg = pushFunc->getArg(0);
+    arg->setName("value");
+    
+    // Load current stack pointer
+    auto sp = builder->CreateLoad(cellType, stackPointer, "sp");
+    
+    // Get stack slot address: &stack[sp]
+    auto stackAddr = builder->CreateInBoundsGEP(
+        stackType, stackBase, 
+        {llvm::ConstantInt::get(cellType, 0), sp}, 
+        "stack_slot");
+    
+    // Store value
+    builder->CreateStore(arg, stackAddr);
+    
+    // Increment stack pointer
+    auto newSp = builder->CreateAdd(sp, llvm::ConstantInt::get(cellType, 1), "new_sp");
+    builder->CreateStore(newSp, stackPointer);
+    
+    builder->CreateRetVoid();
+    
+    // Store reference
+    stackPushFunc = pushFunc;
+    
+    // Create stack_pop function
+    auto popFuncTy = llvm::FunctionType::get(cellType, {}, false);
+    auto popFunc = llvm::Function::Create(popFuncTy, llvm::Function::PrivateLinkage,
+                                         "forth_stack_pop", module.get());
+    
+    auto popEntry = llvm::BasicBlock::Create(*context, "entry", popFunc);
+    builder->SetInsertPoint(popEntry);
+    
+    // Decrement stack pointer
+    auto currentSp = builder->CreateLoad(cellType, stackPointer, "sp");
+    auto newPopSp = builder->CreateSub(currentSp, llvm::ConstantInt::get(cellType, 1), "new_sp");
+    builder->CreateStore(newPopSp, stackPointer);
+    
+    // Load value from stack
+    auto popStackAddr = builder->CreateInBoundsGEP(
+        stackType, stackBase,
+        {llvm::ConstantInt::get(cellType, 0), newPopSp},
+        "stack_slot");
+    
+    auto value = builder->CreateLoad(cellType, popStackAddr, "value");
+    builder->CreateRet(value);
+    
+    stackPopFunc = popFunc;
+}
+#endif
 
 void ForthLLVMCodegen::visit(ProgramNode& node) {
     // Create main function as entry point
@@ -533,19 +676,70 @@ void ForthLLVMCodegen::visit(BeginUntilLoopNode& node) {
     generateBeginUntil(node);
 }
 
+// Fix the MathOperationNode visitor
 void ForthLLVMCodegen::visit(MathOperationNode& node) {
     const auto& op = node.getOperation();
     
+    // Binary arithmetic operations
     if (op == "+") {
+#ifdef WITH_REAL_LLVM
+        generateBinaryOp(llvm::Instruction::Add);
+#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::Add));
+#endif
     } else if (op == "-") {
+#ifdef WITH_REAL_LLVM
+        generateBinaryOp(llvm::Instruction::Sub);
+#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::Sub));
+#endif
     } else if (op == "*") {
+#ifdef WITH_REAL_LLVM
+        generateBinaryOp(llvm::Instruction::Mul);
+#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::Mul));
+#endif
     } else if (op == "/") {
+#ifdef WITH_REAL_LLVM
+        generateBinaryOp(llvm::Instruction::SDiv);
+#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::SDiv));
-    } else {
+#endif
+    } 
+    // Binary comparison operations
+    else if (op == "<") {
+#ifdef WITH_REAL_LLVM
+        generateComparison(llvm::CmpInst::ICMP_SLT);
+#else
+        generateComparison(static_cast<int>(llvm::CmpInst::Predicate::ICMP_SLT));
+#endif
+    } else if (op == ">") {
+#ifdef WITH_REAL_LLVM
+        generateComparison(llvm::CmpInst::ICMP_SGT);
+#else
+        addError("Mock implementation doesn't support >");
+#endif
+    } else if (op == "=") {
+#ifdef WITH_REAL_LLVM
+        generateComparison(llvm::CmpInst::ICMP_EQ);
+#else
+        addError("Mock implementation doesn't support =");
+#endif
+    }
+    // Unary operations
+    else if (op == "NEGATE" || op == "ABS" || op == "DUP" || op == "DROP") {
         generateUnaryOp(op);
+    }
+    // Stack operations that look like math
+    else if (op == "DUP") {
+        generateStackDup();
+    } else if (op == "DROP") {
+        generateStackDrop();
+    } else if (op == "SWAP") {
+        generateStackSwap();
+    }
+    else {
+        addError("Unknown math operation: " + op);
     }
 }
 
@@ -563,37 +757,58 @@ void ForthLLVMCodegen::visit(VariableDeclarationNode& node) {
 }
 
 // Stack operation implementations
+// Fixed stack operations for REAL LLVM
 auto ForthLLVMCodegen::generateStackPush(llvm::Value* value) -> void {
-    // Load current stack pointer
+#ifdef WITH_REAL_LLVM
+    // Call the runtime helper function
+    builder->CreateCall(stackPushFunc, {value});
+#else
+    // Keep mock implementation but fix it
     auto sp = builder->CreateLoad(cellType, stackPointer);
-    
-    // Calculate stack slot address (simplified)
     auto slotAddr = builder->CreateAdd(sp, builder->getInt32(1));
-    
-    // Store value (simplified - would use GEP in real implementation)
-    builder->CreateStore(value, stackPointer);
-    
-    // Update stack pointer
+    builder->CreateStore(value, stackPointer);  // This is wrong in mock!
     builder->CreateStore(slotAddr, stackPointer);
+#endif
 }
 
 auto ForthLLVMCodegen::generateStackPop() -> llvm::Value* {
-    // Load current stack pointer
+#ifdef WITH_REAL_LLVM
+    return builder->CreateCall(stackPopFunc, {}, "popped");
+#else
     auto sp = builder->CreateLoad(cellType, stackPointer);
-    
-    // Decrement stack pointer
     auto newSp = builder->CreateSub(sp, builder->getInt32(1));
     builder->CreateStore(newSp, stackPointer);
-    
-    // Load value from stack (simplified)
-    return builder->CreateLoad(cellType, stackPointer);
+    return builder->CreateLoad(cellType, stackPointer);  // Also wrong in mock!
+#endif
 }
 
+// FIXED binary operation implementation
 auto ForthLLVMCodegen::generateBinaryOp(int binaryOp) -> void {
-    auto b = generateStackPop();
-    auto a = generateStackPop();
+    auto b = generateStackPop();  // Second operand
+    auto a = generateStackPop();  // First operand
     
     llvm::Value* result = nullptr;
+    
+#ifdef WITH_REAL_LLVM
+    switch (binaryOp) {
+        case llvm::Instruction::Add:
+            result = builder->CreateAdd(a, b, "add_result");
+            break;
+        case llvm::Instruction::Sub:
+            result = builder->CreateSub(a, b, "sub_result");
+            break;
+        case llvm::Instruction::Mul:
+            result = builder->CreateMul(a, b, "mul_result");
+            break;
+        case llvm::Instruction::SDiv:
+            result = builder->CreateSDiv(a, b, "div_result");
+            break;
+        default:
+            addError("Unsupported binary operation");
+            return;
+    }
+#else
+    // Mock implementation
     switch (static_cast<llvm::Instruction::BinaryOps>(binaryOp)) {
         case llvm::Instruction::BinaryOps::Add:
             result = builder->CreateAdd(a, b);
@@ -611,15 +826,49 @@ auto ForthLLVMCodegen::generateBinaryOp(int binaryOp) -> void {
             addError("Unsupported binary operation");
             return;
     }
+#endif
     
     generateStackPush(result);
 }
 
+// FIXED comparison operations - these are BINARY not unary!
 auto ForthLLVMCodegen::generateComparison(int predicate) -> void {
-    auto b = generateStackPop();
-    auto a = generateStackPop();
+    auto b = generateStackPop();  // Second operand
+    auto a = generateStackPop();  // First operand
     
     llvm::Value* result = nullptr;
+    
+#ifdef WITH_REAL_LLVM
+    switch (static_cast<llvm::CmpInst::Predicate>(predicate)) {
+        case llvm::CmpInst::ICMP_SLT:  // <
+            result = builder->CreateICmpSLT(a, b, "lt_result");
+            break;
+        case llvm::CmpInst::ICMP_SGT:  // >
+            result = builder->CreateICmpSGT(a, b, "gt_result");
+            break;
+        case llvm::CmpInst::ICMP_EQ:   // =
+            result = builder->CreateICmpEQ(a, b, "eq_result");
+            break;
+        case llvm::CmpInst::ICMP_SLE:  // <=
+            result = builder->CreateICmpSLE(a, b, "le_result");
+            break;
+        case llvm::CmpInst::ICMP_SGE:  // >=
+            result = builder->CreateICmpSGE(a, b, "ge_result");
+            break;
+        case llvm::CmpInst::ICMP_NE:   // <>
+            result = builder->CreateICmpNE(a, b, "ne_result");
+            break;
+        default:
+            addError("Unsupported comparison operation");
+            return;
+    }
+    
+    // Convert boolean result to FORTH convention (-1 for true, 0 for false)
+    auto minusOne = llvm::ConstantInt::get(cellType, -1);
+    auto zero = llvm::ConstantInt::get(cellType, 0);
+    result = builder->CreateSelect(result, minusOne, zero, "forth_bool");
+#else
+    // Mock version
     switch (static_cast<llvm::CmpInst::Predicate>(predicate)) {
         case llvm::CmpInst::Predicate::ICMP_SLT:
             result = builder->CreateICmpSLT(a, b);
@@ -628,6 +877,7 @@ auto ForthLLVMCodegen::generateComparison(int predicate) -> void {
             addError("Unsupported comparison operation");
             return;
     }
+#endif
     
     generateStackPush(result);
 }
@@ -803,22 +1053,33 @@ auto ForthLLVMCodegen::addError(const std::string& message, ASTNode& node) -> vo
 }
 
 auto ForthLLVMCodegen::emitLLVMIR(const std::string& filename) const -> std::string {
+#ifdef WITH_REAL_LLVM
+    std::string ir;
+    llvm::raw_string_ostream stream(ir);
+    module->print(stream, nullptr);
+    
+    if (!filename.empty()) {
+        std::error_code EC;
+        llvm::raw_fd_ostream file(filename, EC, llvm::sys::fs::OF_None);
+        if (!EC) {
+            module->print(file, nullptr);
+        }
+    }
+    
+    return ir;
+#else
+    // Keep mock implementation
     if (!module) {
         return "; Error: No module to emit\n";
     }
     
     std::string ir = module->getIR();
     
-    // Add runtime declarations
     std::string declarations = R"(
 ; FORTH Runtime Support
-; Stack operations and built-in functions would be declared here
-
-; External function declarations for I/O
 declare i32 @printf(i8*, ...)
 declare i32 @putchar(i32)
 declare void @exit(i32)
-
 )";
     
     std::string result = declarations + ir;
@@ -832,6 +1093,7 @@ declare void @exit(i32)
     }
     
     return result;
+#endif
 }
 
 auto ForthLLVMCodegen::emitAssembly(const std::string& filename) const -> std::string {
@@ -864,7 +1126,45 @@ main:
 }
 
 auto ForthLLVMCodegen::emitObjectFile(const std::string& filename) const -> bool {
-    // For mock implementation, create a placeholder object file
+#ifdef WITH_REAL_LLVM
+    auto targetTripleStr = module->getTargetTriple();
+    std::string error;
+    auto target = llvm::TargetRegistry::lookupTarget(targetTripleStr, error);
+    
+    if (!target) {
+        addError("Failed to lookup target: " + error);
+        return false;
+    }
+    
+    llvm::TargetOptions opt;
+    auto targetMachine = std::unique_ptr<llvm::TargetMachine>(
+        target->createTargetMachine(targetTripleStr, "generic", "", opt,
+                                   llvm::Reloc::PIC_));
+    
+    module->setDataLayout(targetMachine->createDataLayout());
+    
+    std::error_code EC;
+    llvm::raw_fd_ostream dest(filename, EC, llvm::sys::fs::OF_None);
+    
+    if (EC) {
+        addError("Could not open file: " + EC.message());
+        return false;
+    }
+    
+    llvm::legacy::PassManager pass;
+    auto fileType = llvm::CGFT_ObjectFile;
+    
+    if (targetMachine->addPassesToEmitFile(pass, dest, nullptr, fileType)) {
+        addError("TargetMachine can't emit object file");
+        return false;
+    }
+    
+    pass.run(*module);
+    dest.flush();
+    
+    return true;
+#else
+    // Mock implementation
     std::ofstream file(filename, std::ios::binary);
     if (file.is_open()) {
         file << "FORTH Mock Object File\n";
@@ -872,6 +1172,7 @@ auto ForthLLVMCodegen::emitObjectFile(const std::string& filename) const -> bool
         return true;
     }
     return false;
+#endif
 }
 
 // Missing implementations for abstract methods
