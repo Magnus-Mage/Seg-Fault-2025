@@ -6,6 +6,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/ConstantFolder.h"
+#include "llvm/IR/IRBuilderFolder.h"
+
 #include "parser/ast.h"
 #include "semantic/analyzer.h"
 #include "dictionary/dictionary.h"
@@ -25,25 +29,9 @@ namespace llvm {
     // Template forward declaration for IRBuilder - FIXED: Use proper template signature
     template<typename T, typename Inserter>
     class IRBuilder;
-    
-    // Use the default template parameters for IRBuilder
-    class IRBuilderBase;
-    template<typename T = void>
-    using IRBuilderDefault = IRBuilder<T, IRBuilderBase>;
-    
+
+    using IRBuilderDefault = llvm::IRBuilder<>;
     // Instruction types
-    namespace Instruction {
-        enum BinaryOps {
-            Add, Sub, Mul, UDiv, SDiv
-        };
-    }
-    
-    namespace CmpInst {
-        enum Predicate {
-            ICMP_EQ, ICMP_NE, ICMP_UGT, ICMP_UGE, ICMP_ULT, ICMP_ULE,
-            ICMP_SGT, ICMP_SGE, ICMP_SLT, ICMP_SLE
-        };
-    }
 }
 
 // Custom deleters for forward-declared LLVM types
@@ -56,7 +44,7 @@ struct ModuleDeleter {
 };
 
 struct IRBuilderDeleter {
-    void operator()(llvm::IRBuilderDefault<>* ptr);
+    void operator()(llvm::IRBuilder<>* ptr);
 };
 
 struct TargetMachineDeleter {
@@ -72,12 +60,15 @@ private:
     
     auto createRuntimeHelpers() -> void;
     #endif
+    
+    struct ConstantFolder;
+    struct IRBuilderDefaultInserter;
 
     // LLVM core objects with custom deleters - FIXED: Use correct IRBuilder type
     std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter> context;
     std::unique_ptr<llvm::Module, ModuleDeleter> module;  
-    std::unique_ptr<llvm::IRBuilderDefault<>, IRBuilderDeleter> builder;
-    
+    std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter> builder;
+
     // Target configuration
     std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter> targetMachine;
     std::string targetTriple;

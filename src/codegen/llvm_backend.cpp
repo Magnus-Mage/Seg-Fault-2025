@@ -4,6 +4,8 @@
 #include "dictionary/dictionary.h"
 
 #ifdef WITH_REAL_LLVM
+#include "llvm/IR/ConstantFolder.h"
+#include "llvm/IR/IRBuilderFolder.h"
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/Module.h>
 #include <llvm/IR/IRBuilder.h>
@@ -19,11 +21,12 @@
 #include <llvm/Target/TargetMachine.h>
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/MC/TargetRegistry.h>
-#include <llvm/Support/Host.h>
+#include <llvm/TargetParser/Host.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/LegacyPassManager.h>
-#include <llvm/Transforms/IPO/PassManagerBuilder.h>
+#include "llvm/Passes/PassBuilder.h"
+#include "llvm/IR/PassManager.h"
 #include <llvm/Support/CodeGen.h>
 #include <llvm/IR/DerivedTypes.h>
 #endif
@@ -206,11 +209,12 @@ namespace llvm {
     class FunctionCallee {
     private:
         Function* func;
-        
+    	FunctionType* funcType;    
     public:
-        FunctionCallee(Function* f) : func(f) {}
-        operator Function*() const { return func; }
+    FunctionCallee(Function* f, FunctionType* ft = nullptr) : func(f), funcType(ft) {}
         Function* getCallee() const { return func; }
+        FunctionType* getFunctionType() const { return funcType; }
+        operator Function*() const { return func; }
     };
     
     class Module {
@@ -222,7 +226,7 @@ namespace llvm {
         mutable std::stringstream irStream;
         
     public:
-        Module(const std::string& name, llvm::LLVMContext& context = *static_cast<llvm::LLVMContext*>(nullptr)) {
+        Module(const std::string& name, llvm::LLVMContext& context) {
             irStream << "; ModuleID = '" << name << "'\n";
             setTargetTriple("x86_64-unknown-linux-gnu");
         }
@@ -259,7 +263,13 @@ namespace llvm {
         // FIXED: Create GlobalVariable properly
         auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes linkage, 
                                 Constant* initializer, const std::string& name) -> GlobalVariable* {
-            auto global = std::make_unique<GlobalVariable>("@" + name, type);
+            auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes linkage, 
+            Constant* initializer, const std::string& name) -> GlobalVariable* {
+        #ifdef WITH_REAL_LLVM
+    	    return new GlobalVariable(*this, type, isConstant, linkage, initializer, name);
+        #else
+		
+	    auto global = std::make_unique<GlobalVariable>("@" + name, type);
             auto ptr = global.get();
             globals.push_back(std::move(global));
             
@@ -269,6 +279,7 @@ namespace llvm {
             irStream << "i32 0\n";
             
             return ptr;
+	#endif
         }
         
         auto print(std::ostream& os) const -> void {
@@ -324,8 +335,15 @@ namespace llvm {
         }
         
     public:
-        IRBuilder(LLVMContext& ctx) : module(nullptr), currentBlock(nullptr), context(&ctx) {}
-        IRBuilder(Module* mod) : module(mod), currentBlock(nullptr), context(nullptr) {}
+        // FIX - Real LLVM 15:
+	#ifdef WITH_REAL_LLVM
+	IRBuilder(LLVMContext& ctx) : llvm::IRBuilder<>(ctx), module(nullptr), currentBlock(nullptr) {}
+	#else
+	// Keep mock implementation
+	IRBuilder(LLVMContext& ctx) : module(nullptr), currentBlock(nullptr), context(&ctx) {}
+	#endif
+
+	IRBuilder(Module* mod) : module(mod), currentBlock(nullptr), context(nullptr) {}
         
         auto GetInsertBlock() -> BasicBlock* { return currentBlock; }
         
@@ -588,7 +606,10 @@ ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName)
 #ifdef WITH_REAL_LLVM
     context = std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext());
     module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName, *context));
-    builder = std::unique_ptr<llvm::IRBuilderDefault<>, IRBuilderDeleter>(new llvm::IRBuilderDefault<>(*context));
+    builder = std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context));
+    
+    // CRITICAL: Set opaque pointer mode
+    //context->setOpaquePointers(false); // For compatibility, or true for new code
     
     initializeLLVM();
     createForthRuntime();
@@ -621,6 +642,12 @@ auto ForthLLVMCodegen::initializeLLVM() -> void {
     // Set module target
     module->setTargetTriple(targetTriple);
     module->setDataLayout("e-m:e-p:32:32-i1:8:32-i8:8:32-i16:16:32-i64:64-f128:128-a:0:32-n32-S128");
+
+    // CRITICAL: Handle opaque pointers
+    //if (context->supportsTypedPointers()) {
+        // context->setOpaquePointers(false); // Use typed pointers for compatibility
+    //}
+
 #else
     // Mock implementation
     cellType = llvm::Type::getInt32Ty(*context);
@@ -634,13 +661,13 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
     // Create real global arrays for stacks
     auto initializer = llvm::ConstantAggregateZero::get(stackType);
     
-    auto stackGlobal = module->createGlobalVariable(
-        stackType, false,
-        llvm::GlobalValue::PrivateLinkage,
-        initializer, "forth_data_stack");
+    auto stackGlobal = new llvm::GlobalVariable(
+    	*module, stackType, false,
+    	llvm::GlobalValue::PrivateLinkage,
+    	initializer, "forth_data_stack");
     stackBase = stackGlobal;
     
-    auto returnStackGlobal = module->createGlobalVariable(
+    auto returnStackGlobal = new llvm::GlobalVariable(
         stackType, false,
         llvm::GlobalValue::PrivateLinkage,
         initializer, "forth_return_stack");
@@ -648,13 +675,13 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
     
     // Stack pointers (indices into arrays)
     auto zero = llvm::ConstantInt::get(cellType, 0);
-    auto spGlobal = module->createGlobalVariable(
+    auto spGlobal = new llvm::GlobalVariable(
         cellType, false,
         llvm::GlobalValue::PrivateLinkage,
         zero, "forth_sp");
     stackPointer = spGlobal;
     
-    auto rspGlobal = module->createGlobalVariable(
+    auto rspGlobal = new llvm::GlobalVariable(
         cellType, false,
         llvm::GlobalValue::PrivateLinkage,
         zero, "forth_rsp");
@@ -1150,7 +1177,7 @@ auto ForthLLVMCodegen::generateUnaryOp(const std::string& operation) -> void {
 auto ForthLLVMCodegen::generateVariableDeclaration(const std::string& name) -> void {
 #ifdef WITH_REAL_LLVM
     auto zero = llvm::ConstantInt::get(cellType, 0);
-    auto var = module->createGlobalVariable(cellType, false, 
+    auto var = new llvm::GlobalVariable(cellType, false, 
                                           llvm::GlobalValue::PrivateLinkage, 
                                           zero, name);
     variables[name] = var;
@@ -1627,7 +1654,7 @@ void ModuleDeleter::operator()(llvm::Module* ptr) {
     delete ptr;
 }
 
-void IRBuilderDeleter::operator()(llvm::IRBuilderDefault<>* ptr) {
+void IRBuilderDeleter::operator()(llvm::IRBuilder<>* ptr) {
     delete ptr;
 }
 

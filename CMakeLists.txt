@@ -93,7 +93,7 @@ if(WITH_LLVM)
             passes 
             
             # Platform-specific codegen
-            nativecodegen
+	    # nativecodegen
             
             # Additional useful components
             ipo
@@ -101,6 +101,14 @@ if(WITH_LLVM)
             scalaropts
             vectorize
             objcarcopts
+	    bitreader
+
+	    # x86 related passes
+	    x86codegen
+	    x86asmprinter
+  	    x86asmparser
+
+
         )
         
         # Link LLVM libraries
