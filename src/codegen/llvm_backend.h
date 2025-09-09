@@ -19,14 +19,31 @@ namespace llvm {
     class Type;
     class BasicBlock;
     class TargetMachine;
+    class Constant;
+    class GlobalVariable;
     
-    // Template forward declaration for IRBuilder
-    template<typename T = void>
+    // Template forward declaration for IRBuilder - FIXED: Use proper template signature
+    template<typename T, typename Inserter>
     class IRBuilder;
     
-    // Enum forward declarations
-    enum class BinaryOps;
-    enum class Predicate;
+    // Use the default template parameters for IRBuilder
+    class IRBuilderBase;
+    template<typename T = void>
+    using IRBuilderDefault = IRBuilder<T, IRBuilderBase>;
+    
+    // Instruction types
+    namespace Instruction {
+        enum BinaryOps {
+            Add, Sub, Mul, UDiv, SDiv
+        };
+    }
+    
+    namespace CmpInst {
+        enum Predicate {
+            ICMP_EQ, ICMP_NE, ICMP_UGT, ICMP_UGE, ICMP_ULT, ICMP_ULE,
+            ICMP_SGT, ICMP_SGE, ICMP_SLT, ICMP_SLE
+        };
+    }
 }
 
 // Custom deleters for forward-declared LLVM types
@@ -39,7 +56,7 @@ struct ModuleDeleter {
 };
 
 struct IRBuilderDeleter {
-    void operator()(llvm::IRBuilder<>* ptr);
+    void operator()(llvm::IRBuilderDefault<>* ptr);
 };
 
 struct TargetMachineDeleter {
@@ -49,20 +66,20 @@ struct TargetMachineDeleter {
 // LLVM code generation for FORTH
 class ForthLLVMCodegen : public ASTVisitor {
 private:
-
     #ifdef WITH_REAL_LLVM
     llvm::Function* stackPushFunc;
     llvm::Function* stackPopFunc;
     
     auto createRuntimeHelpers() -> void;
-#endif
+    #endif
 
-    // LLVM core objects with custom deleters
+    // LLVM core objects with custom deleters - FIXED: Use correct IRBuilder type
     std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter> context;
     std::unique_ptr<llvm::Module, ModuleDeleter> module;  
-    std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter> builder;
+    std::unique_ptr<llvm::IRBuilderDefault<>, IRBuilderDeleter> builder;
+    
     // Target configuration
-    std::unique_ptr<llvm::TargetMachine> targetMachine;
+    std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter> targetMachine;
     std::string targetTriple;
     
     // FORTH runtime state
@@ -77,7 +94,7 @@ private:
     // Function management
     llvm::Function* currentFunction;
     std::unordered_map<std::string, llvm::Function*> wordFunctions;
-    std::unordered_map<std::string, llvm::Value*> variables;
+    std::unordered_map<std::string, llvm::GlobalVariable*> variables;
     std::unordered_map<std::string, llvm::Value*> constants;
     
     // Control flow management
@@ -91,7 +108,7 @@ private:
     // Code generation state
     bool inWordDefinition;
     std::string currentWordName;
-    std::vector<std::string> errors;
+    mutable std::vector<std::string> errors; // FIXED: Make mutable for const methods
     
 public:
     explicit ForthLLVMCodegen(const std::string& moduleName = "forth_module");
@@ -123,7 +140,7 @@ public:
     [[nodiscard]] auto getErrors() const -> const std::vector<std::string>& { return errors; }
     auto clearErrors() -> void { errors.clear(); }
     
-    // Output generation - Fixed const correctness
+    // Output generation - FIXED: const correctness
     auto emitLLVMIR(const std::string& filename = "") const -> std::string;
     auto emitAssembly(const std::string& filename = "") const -> std::string;
     auto emitObjectFile(const std::string& filename) const -> bool;
@@ -152,10 +169,10 @@ private:
     auto generateStackSwap() -> void;
     auto generateStackDrop() -> void;
     
-    // Arithmetic operations - Fixed parameter types
-    auto generateBinaryOp(int binaryOp) -> void;  // Use int instead of enum
+    // Arithmetic operations - Use int to avoid template issues
+    auto generateBinaryOp(int binaryOp) -> void;
     auto generateUnaryOp(const std::string& operation) -> void;
-    auto generateComparison(int predicate) -> void;  // Use int instead of enum
+    auto generateComparison(int predicate) -> void;
     
     // Control flow generation
     auto generateIf(IfStatementNode& node) -> void;
@@ -180,8 +197,8 @@ private:
     
     // Utility functions
     auto createBasicBlock(const std::string& name, llvm::Function* func = nullptr) -> llvm::BasicBlock*;
-    auto addError(const std::string& message) -> void;
-    auto addError(const std::string& message, ASTNode& node) -> void;
+    auto addError(const std::string& message) const -> void; // FIXED: Make const
+    auto addError(const std::string& message, ASTNode& node) const -> void; // FIXED: Make const
     
     // Built-in word implementations
     auto initializeBuiltinWords() -> void;

@@ -24,8 +24,8 @@
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/LegacyPassManager.h>
 #include <llvm/Transforms/IPO/PassManagerBuilder.h>
-#include <llvm/MC/TargetRegistry.h>
 #include <llvm/Support/CodeGen.h>
+#include <llvm/IR/DerivedTypes.h>
 #endif
 
 #include <sstream>
@@ -67,6 +67,15 @@ namespace llvm {
         }
     };
     
+    // FIXED: Add ArrayType for mock implementation
+    class ArrayType : public Type {
+    public:
+        static ArrayType* get(Type* elementType, uint64_t numElements) {
+            static ArrayType instance;
+            return &instance;
+        }
+    };
+    
     class Value {
     protected:
         std::string name;
@@ -78,6 +87,49 @@ namespace llvm {
         const std::string& getName() const { return name; }
         Type* getType() const { return type; }
         void setName(const std::string& n) { name = n; }
+    };
+    
+    // FIXED: Add Constant hierarchy
+    class Constant : public Value {
+    public:
+        Constant(const std::string& n, Type* t = nullptr) : Value(n, t) {}
+    };
+    
+    class ConstantInt : public Constant {
+    public:
+        ConstantInt(int value, Type* t) : Constant(std::to_string(value), t) {}
+        static ConstantInt* get(Type* type, int value) {
+            auto c = new ConstantInt(value, type);
+            allocatedValues.push_back(std::unique_ptr<Value>(c));
+            return c;
+        }
+    };
+    
+    class ConstantAggregateZero : public Constant {
+    public:
+        ConstantAggregateZero(Type* t) : Constant("zeroinitializer", t) {}
+        static ConstantAggregateZero* get(Type* type) {
+            auto c = new ConstantAggregateZero(type);
+            allocatedValues.push_back(std::unique_ptr<Value>(c));
+            return c;
+        }
+    };
+    
+    // FIXED: Add GlobalValue hierarchy
+    class GlobalValue : public Constant {
+    public:
+        enum LinkageTypes {
+            ExternalLinkage,
+            PrivateLinkage,
+            InternalLinkage
+        };
+        
+        GlobalValue(const std::string& n, Type* t) : Constant(n, t) {}
+    };
+    
+    class GlobalVariable : public GlobalValue {
+    public:
+        GlobalVariable(const std::string& name, Type* type) : GlobalValue(name, type) {}
     };
     
     class BasicBlock : public Value {
@@ -95,16 +147,36 @@ namespace llvm {
         const std::vector<std::string>& getInstructions() const {
             return instructions;
         }
+        
+        // FIXED: Add Create method
+        static BasicBlock* Create(LLVMContext& context, const std::string& name, Function* parent = nullptr) {
+            return new BasicBlock(name);
+        }
     };
     
-    class Function : public Value {
+    // FIXED: Add FunctionType
+    class FunctionType : public Type {
+    public:
+        static FunctionType* get(Type* returnType, std::vector<Type*> params, bool isVarArgs = false) {
+            static FunctionType instance;
+            return &instance;
+        }
+    };
+    
+    class Function : public GlobalValue {
     private:
         std::vector<std::unique_ptr<BasicBlock>> blocks;
         std::vector<std::string> attributes;
+        std::vector<Value*> args;
         
     public:
-        Function(const std::string& name, Type* t = nullptr) : Value(name, t) {}
+        Function(const std::string& name, Type* t = nullptr) : GlobalValue(name, t) {}
         virtual ~Function() = default;
+        
+        // FIXED: Add Create method for LLVM 15 compatibility
+        static Function* Create(FunctionType* ty, LinkageTypes linkage, const std::string& name, Module* module = nullptr) {
+            return new Function(name, ty);
+        }
         
         auto createBasicBlock(const std::string& name) -> BasicBlock* {
             blocks.push_back(std::make_unique<BasicBlock>(name));
@@ -122,32 +194,50 @@ namespace llvm {
         const std::vector<std::string>& getAttributes() const {
             return attributes;
         }
+        
+        // FIXED: Add argument handling
+        Value* getArg(unsigned i) {
+            if (i < args.size()) return args[i];
+            return nullptr;
+        }
+    };
+    
+    // FIXED: Add FunctionCallee for LLVM 15 compatibility
+    class FunctionCallee {
+    private:
+        Function* func;
+        
+    public:
+        FunctionCallee(Function* f) : func(f) {}
+        operator Function*() const { return func; }
+        Function* getCallee() const { return func; }
     };
     
     class Module {
     private:
         std::vector<std::unique_ptr<Function>> functions;
-        std::vector<std::unique_ptr<Value>> globals;
+        std::vector<std::unique_ptr<GlobalVariable>> globals;
         std::string targetTriple;
         std::string targetDataLayout;
         mutable std::stringstream irStream;
         
     public:
-        Module(const std::string& name, llvm::LLVMContext& context = *static_cast<llvm::LLVMContext*>(nullptr)) {    irStream << "; ModuleID = '" << name << "'\n";
+        Module(const std::string& name, llvm::LLVMContext& context = *static_cast<llvm::LLVMContext*>(nullptr)) {
+            irStream << "; ModuleID = '" << name << "'\n";
             setTargetTriple("x86_64-unknown-linux-gnu");
         }
         
         virtual ~Module() = default;
         
-        auto getOrInsertFunction(const std::string& name, Type* retType, 
-                                std::vector<Type*> args = {}) -> Function* {
+        // FIXED: Return FunctionCallee for LLVM 15 compatibility
+        auto getOrInsertFunction(const std::string& name, FunctionType* type) -> FunctionCallee {
             for (auto& func : functions) {
                 if (func->getName() == name) {
-                    return func.get();
+                    return FunctionCallee(func.get());
                 }
             }
-            functions.push_back(std::make_unique<Function>(name, retType));
-            return functions.back().get();
+            functions.push_back(std::make_unique<Function>(name, type));
+            return FunctionCallee(functions.back().get());
         }
         
         auto getFunctionList() -> std::vector<std::unique_ptr<Function>>& { 
@@ -162,12 +252,14 @@ namespace llvm {
             irStream << "target triple = \"" << triple << "\"\n\n";
         }
         
-        auto getTargetTriple() const -> const std::string& {
+        auto getTargetTriple() const -> std::string {
             return targetTriple;
         }
         
-        auto addGlobalVariable(const std::string& name, Type* type, bool isConstant = false) -> Value* {
-            auto global = std::make_unique<Value>("@" + name, type);
+        // FIXED: Create GlobalVariable properly
+        auto createGlobalVariable(Type* type, bool isConstant, GlobalValue::LinkageTypes linkage, 
+                                Constant* initializer, const std::string& name) -> GlobalVariable* {
+            auto global = std::make_unique<GlobalVariable>("@" + name, type);
             auto ptr = global.get();
             globals.push_back(std::move(global));
             
@@ -217,7 +309,8 @@ namespace llvm {
         }
     };
     
-    template<typename T>
+    // FIXED: Use proper template signature for IRBuilder
+    template<typename T = void>
     class IRBuilder {
     private:
         Module* module;
@@ -323,6 +416,75 @@ namespace llvm {
             return result;
         }
         
+        auto CreateICmpSGT(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                currentBlock->addInstruction(resultName + " = icmp sgt i32 " + lhs->getName() + ", " + rhs->getName());
+            }
+            
+            return result;
+        }
+        
+        auto CreateICmpEQ(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                currentBlock->addInstruction(resultName + " = icmp eq i32 " + lhs->getName() + ", " + rhs->getName());
+            }
+            
+            return result;
+        }
+        
+        // FIXED: Add missing comparison operations
+        auto CreateICmpSLE(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                currentBlock->addInstruction(resultName + " = icmp sle i32 " + lhs->getName() + ", " + rhs->getName());
+            }
+            
+            return result;
+        }
+        
+        auto CreateICmpSGE(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                currentBlock->addInstruction(resultName + " = icmp sge i32 " + lhs->getName() + ", " + rhs->getName());
+            }
+            
+            return result;
+        }
+        
+        auto CreateICmpNE(Value* lhs, Value* rhs, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                currentBlock->addInstruction(resultName + " = icmp ne i32 " + lhs->getName() + ", " + rhs->getName());
+            }
+            
+            return result;
+        }
+        
+        auto CreateSelect(Value* cond, Value* trueVal, Value* falseVal, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                currentBlock->addInstruction(resultName + " = select i1 " + cond->getName() + 
+                                           ", i32 " + trueVal->getName() + 
+                                           ", i32 " + falseVal->getName());
+            }
+            
+            return result;
+        }
+        
         auto CreateCondBr(Value* cond, BasicBlock* trueBlock, BasicBlock* falseBlock) -> void {
             if (currentBlock) {
                 currentBlock->addInstruction("br i1 " + cond->getName() + 
@@ -347,6 +509,10 @@ namespace llvm {
             }
         }
         
+        auto CreateRetVoid() -> void {
+            CreateRet();
+        }
+        
         auto CreateCall(Function* func, std::vector<Value*> args = {}, const std::string& name = "") -> Value* {
             std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
             auto result = createManagedValue(resultName);
@@ -367,6 +533,19 @@ namespace llvm {
             std::string globalName = name.empty() ? ("str" + std::to_string(nextTempId++)) : name;
             return createManagedValue("@" + globalName);
         }
+        
+        // FIXED: Add missing GEP method
+        auto CreateInBoundsGEP(Type* type, Value* ptr, std::vector<Value*> indices, const std::string& name = "") -> Value* {
+            std::string resultName = name.empty() ? ("%temp" + std::to_string(nextTempId++)) : name;
+            auto result = createManagedValue(resultName);
+            
+            if (currentBlock) {
+                std::string gep = resultName + " = getelementptr inbounds " + ptr->getName();
+                currentBlock->addInstruction(gep);
+            }
+            
+            return result;
+        }
     };
     
     class TargetMachine {
@@ -377,20 +556,17 @@ namespace llvm {
     };
     
     // Instruction types for compatibility
-    enum class BinaryOps {
-        Add, Sub, Mul, UDiv, SDiv
-    };
-    
-    enum class Predicate {
-        ICMP_SLT, ICMP_SGT, ICMP_EQ
-    };
-    
     namespace Instruction {
-        using BinaryOps = llvm::BinaryOps;
+        enum BinaryOps {
+            Add, Sub, Mul, UDiv, SDiv
+        };
     }
     
     namespace CmpInst {
-        using Predicate = llvm::Predicate;
+        enum Predicate {
+            ICMP_EQ, ICMP_NE, ICMP_UGT, ICMP_UGE, ICMP_ULT, ICMP_ULE,
+            ICMP_SGT, ICMP_SGE, ICMP_SLT, ICMP_SLE
+        };
     }
 }
 #endif // WITH_REAL_LLVM
@@ -412,7 +588,7 @@ ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName)
 #ifdef WITH_REAL_LLVM
     context = std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext());
     module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName, *context));
-    builder = std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context));
+    builder = std::unique_ptr<llvm::IRBuilderDefault<>, IRBuilderDeleter>(new llvm::IRBuilderDefault<>(*context));
     
     initializeLLVM();
     createForthRuntime();
@@ -420,7 +596,7 @@ ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName)
     // Keep your existing mock implementation as fallback
     context = std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext());
     module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName));
-    builder = std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context));
+    builder = std::unique_ptr<llvm::IRBuilderDefault<>, IRBuilderDeleter>(new llvm::IRBuilderDefault<>(*context));
     
     initializeLLVM();
     createForthRuntime();
@@ -448,7 +624,7 @@ auto ForthLLVMCodegen::initializeLLVM() -> void {
 #else
     // Mock implementation
     cellType = llvm::Type::getInt32Ty(*context);
-    stackType = cellType;
+    stackType = llvm::ArrayType::get(cellType, 256);
     module->setTargetTriple(targetTriple);
 #endif
 }
@@ -458,36 +634,40 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
     // Create real global arrays for stacks
     auto initializer = llvm::ConstantAggregateZero::get(stackType);
     
-    stackBase = new llvm::GlobalVariable(
-        *module, stackType, false,
+    auto stackGlobal = module->createGlobalVariable(
+        stackType, false,
         llvm::GlobalValue::PrivateLinkage,
         initializer, "forth_data_stack");
+    stackBase = stackGlobal;
     
-    returnStackBase = new llvm::GlobalVariable(
-        *module, stackType, false,
+    auto returnStackGlobal = module->createGlobalVariable(
+        stackType, false,
         llvm::GlobalValue::PrivateLinkage,
         initializer, "forth_return_stack");
+    returnStackBase = returnStackGlobal;
     
     // Stack pointers (indices into arrays)
     auto zero = llvm::ConstantInt::get(cellType, 0);
-    stackPointer = new llvm::GlobalVariable(
-        *module, cellType, false,
+    auto spGlobal = module->createGlobalVariable(
+        cellType, false,
         llvm::GlobalValue::PrivateLinkage,
         zero, "forth_sp");
+    stackPointer = spGlobal;
     
-    returnStackPointer = new llvm::GlobalVariable(
-        *module, cellType, false,
+    auto rspGlobal = module->createGlobalVariable(
+        cellType, false,
         llvm::GlobalValue::PrivateLinkage,
         zero, "forth_rsp");
+    returnStackPointer = rspGlobal;
         
     // Create runtime helper functions
     createRuntimeHelpers();
 #else
-    // Keep mock implementation
-    stackBase = module->addGlobalVariable("forth_data_stack", cellType, false);
-    stackPointer = module->addGlobalVariable("forth_sp", cellType, false);
-    returnStackBase = module->addGlobalVariable("forth_return_stack", cellType, false);
-    returnStackPointer = module->addGlobalVariable("forth_rsp", cellType, false);
+    // Mock implementation - create mock globals
+    stackBase = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_data_stack", cellType));
+    stackPointer = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_sp", cellType));
+    returnStackBase = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_return_stack", cellType));
+    returnStackPointer = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_rsp", cellType));
 #endif
 }
 
@@ -531,16 +711,18 @@ auto ForthLLVMCodegen::createRuntimeHelpers() -> void {
     auto sp = builder->CreateLoad(cellType, stackPointer, "sp");
     
     // Get stack slot address: &stack[sp]
+    auto zero = llvm::ConstantInt::get(cellType, 0);
     auto stackAddr = builder->CreateInBoundsGEP(
         stackType, stackBase, 
-        {llvm::ConstantInt::get(cellType, 0), sp}, 
+        {zero, sp}, 
         "stack_slot");
     
     // Store value
     builder->CreateStore(arg, stackAddr);
     
     // Increment stack pointer
-    auto newSp = builder->CreateAdd(sp, llvm::ConstantInt::get(cellType, 1), "new_sp");
+    auto one = llvm::ConstantInt::get(cellType, 1);
+    auto newSp = builder->CreateAdd(sp, one, "new_sp");
     builder->CreateStore(newSp, stackPointer);
     
     builder->CreateRetVoid();
@@ -558,13 +740,13 @@ auto ForthLLVMCodegen::createRuntimeHelpers() -> void {
     
     // Decrement stack pointer
     auto currentSp = builder->CreateLoad(cellType, stackPointer, "sp");
-    auto newPopSp = builder->CreateSub(currentSp, llvm::ConstantInt::get(cellType, 1), "new_sp");
+    auto newPopSp = builder->CreateSub(currentSp, one, "new_sp");
     builder->CreateStore(newPopSp, stackPointer);
     
     // Load value from stack
     auto popStackAddr = builder->CreateInBoundsGEP(
         stackType, stackBase,
-        {llvm::ConstantInt::get(cellType, 0), newPopSp},
+        {zero, newPopSp},
         "stack_slot");
     
     auto value = builder->CreateLoad(cellType, popStackAddr, "value");
@@ -576,9 +758,16 @@ auto ForthLLVMCodegen::createRuntimeHelpers() -> void {
 
 void ForthLLVMCodegen::visit(ProgramNode& node) {
     // Create main function as entry point
-    auto mainFunc = createWordFunction("main");
-    currentFunction = mainFunc;
-    auto entryBlock = mainFunc->createBasicBlock("entry");
+    auto mainFuncType = llvm::FunctionType::get(cellType, {}, false);
+    auto mainFuncCallee = module->getOrInsertFunction("main", mainFuncType);
+    
+#ifdef WITH_REAL_LLVM
+    currentFunction = llvm::cast<llvm::Function>(mainFuncCallee.getCallee());
+#else
+    currentFunction = static_cast<llvm::Function*>(mainFuncCallee);
+#endif
+    
+    auto entryBlock = llvm::BasicBlock::Create(*context, "entry", currentFunction);
     builder->SetInsertPoint(entryBlock);
     
     // Initialize FORTH runtime
@@ -610,7 +799,7 @@ void ForthLLVMCodegen::visit(WordDefinitionNode& node) {
     auto savedBlock = builder->GetInsertBlock();
     
     currentFunction = func;
-    auto entryBlock = func->createBasicBlock("entry");
+    auto entryBlock = llvm::BasicBlock::Create(*context, "entry", func);
     builder->SetInsertPoint(entryBlock);
     
     // Generate code for word body
@@ -618,7 +807,7 @@ void ForthLLVMCodegen::visit(WordDefinitionNode& node) {
         child->accept(*this);
     }
     
-    builder->CreateRet(); // Void return for FORTH words
+    builder->CreateRetVoid(); // Void return for FORTH words
     
     // Restore context
     currentFunction = savedFunction;
@@ -682,53 +871,21 @@ void ForthLLVMCodegen::visit(MathOperationNode& node) {
     
     // Binary arithmetic operations
     if (op == "+") {
-#ifdef WITH_REAL_LLVM
-        generateBinaryOp(llvm::Instruction::Add);
-#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::Add));
-#endif
     } else if (op == "-") {
-#ifdef WITH_REAL_LLVM
-        generateBinaryOp(llvm::Instruction::Sub);
-#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::Sub));
-#endif
     } else if (op == "*") {
-#ifdef WITH_REAL_LLVM
-        generateBinaryOp(llvm::Instruction::Mul);
-#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::Mul));
-#endif
     } else if (op == "/") {
-#ifdef WITH_REAL_LLVM
-        generateBinaryOp(llvm::Instruction::SDiv);
-#else
         generateBinaryOp(static_cast<int>(llvm::Instruction::BinaryOps::SDiv));
-#endif
     } 
     // Binary comparison operations
     else if (op == "<") {
-#ifdef WITH_REAL_LLVM
-        generateComparison(llvm::CmpInst::ICMP_SLT);
-#else
         generateComparison(static_cast<int>(llvm::CmpInst::Predicate::ICMP_SLT));
-#endif
     } else if (op == ">") {
-#ifdef WITH_REAL_LLVM
-        generateComparison(llvm::CmpInst::ICMP_SGT);
-#else
-        addError("Mock implementation doesn't support >");
-#endif
+        generateComparison(static_cast<int>(llvm::CmpInst::Predicate::ICMP_SGT));
     } else if (op == "=") {
-#ifdef WITH_REAL_LLVM
-        generateComparison(llvm::CmpInst::ICMP_EQ);
-#else
-        addError("Mock implementation doesn't support =");
-#endif
-    }
-    // Unary operations
-    else if (op == "NEGATE" || op == "ABS" || op == "DUP" || op == "DROP") {
-        generateUnaryOp(op);
+        generateComparison(static_cast<int>(llvm::CmpInst::Predicate::ICMP_EQ));
     }
     // Stack operations that look like math
     else if (op == "DUP") {
@@ -757,17 +914,15 @@ void ForthLLVMCodegen::visit(VariableDeclarationNode& node) {
 }
 
 // Stack operation implementations
-// Fixed stack operations for REAL LLVM
 auto ForthLLVMCodegen::generateStackPush(llvm::Value* value) -> void {
 #ifdef WITH_REAL_LLVM
     // Call the runtime helper function
     builder->CreateCall(stackPushFunc, {value});
 #else
-    // Keep mock implementation but fix it
-    auto sp = builder->CreateLoad(cellType, stackPointer);
-    auto slotAddr = builder->CreateAdd(sp, builder->getInt32(1));
-    builder->CreateStore(value, stackPointer);  // This is wrong in mock!
-    builder->CreateStore(slotAddr, stackPointer);
+    // Mock implementation - just store to a global
+    if (currentFunction && builder->GetInsertBlock()) {
+        builder->GetInsertBlock()->addInstruction("call void @forth_stack_push(i32 " + value->getName() + ")");
+    }
 #endif
 }
 
@@ -775,88 +930,58 @@ auto ForthLLVMCodegen::generateStackPop() -> llvm::Value* {
 #ifdef WITH_REAL_LLVM
     return builder->CreateCall(stackPopFunc, {}, "popped");
 #else
-    auto sp = builder->CreateLoad(cellType, stackPointer);
-    auto newSp = builder->CreateSub(sp, builder->getInt32(1));
-    builder->CreateStore(newSp, stackPointer);
-    return builder->CreateLoad(cellType, stackPointer);  // Also wrong in mock!
+    // Mock implementation
+    auto result = builder->getInt32(0);  // Simplified
+    if (currentFunction && builder->GetInsertBlock()) {
+        builder->GetInsertBlock()->addInstruction("%popped = call i32 @forth_stack_pop()");
+    }
+    return result;
 #endif
 }
 
-// FIXED binary operation implementation
+// Continue with remaining methods...
 auto ForthLLVMCodegen::generateBinaryOp(int binaryOp) -> void {
     auto b = generateStackPop();  // Second operand
     auto a = generateStackPop();  // First operand
     
     llvm::Value* result = nullptr;
     
-#ifdef WITH_REAL_LLVM
-    switch (binaryOp) {
-        case llvm::Instruction::Add:
+    switch (static_cast<llvm::Instruction::BinaryOps>(binaryOp)) {
+        case llvm::Instruction::BinaryOps::Add:
             result = builder->CreateAdd(a, b, "add_result");
             break;
-        case llvm::Instruction::Sub:
+        case llvm::Instruction::BinaryOps::Sub:
             result = builder->CreateSub(a, b, "sub_result");
             break;
-        case llvm::Instruction::Mul:
+        case llvm::Instruction::BinaryOps::Mul:
             result = builder->CreateMul(a, b, "mul_result");
             break;
-        case llvm::Instruction::SDiv:
+        case llvm::Instruction::BinaryOps::SDiv:
             result = builder->CreateSDiv(a, b, "div_result");
             break;
         default:
             addError("Unsupported binary operation");
             return;
     }
-#else
-    // Mock implementation
-    switch (static_cast<llvm::Instruction::BinaryOps>(binaryOp)) {
-        case llvm::Instruction::BinaryOps::Add:
-            result = builder->CreateAdd(a, b);
-            break;
-        case llvm::Instruction::BinaryOps::Sub:
-            result = builder->CreateSub(a, b);
-            break;
-        case llvm::Instruction::BinaryOps::Mul:
-            result = builder->CreateMul(a, b);
-            break;
-        case llvm::Instruction::BinaryOps::SDiv:
-            result = builder->CreateSDiv(a, b);
-            break;
-        default:
-            addError("Unsupported binary operation");
-            return;
-    }
-#endif
     
     generateStackPush(result);
 }
 
-// FIXED comparison operations - these are BINARY not unary!
 auto ForthLLVMCodegen::generateComparison(int predicate) -> void {
     auto b = generateStackPop();  // Second operand
     auto a = generateStackPop();  // First operand
     
     llvm::Value* result = nullptr;
     
-#ifdef WITH_REAL_LLVM
     switch (static_cast<llvm::CmpInst::Predicate>(predicate)) {
-        case llvm::CmpInst::ICMP_SLT:  // <
+        case llvm::CmpInst::Predicate::ICMP_SLT:  // <
             result = builder->CreateICmpSLT(a, b, "lt_result");
             break;
-        case llvm::CmpInst::ICMP_SGT:  // >
+        case llvm::CmpInst::Predicate::ICMP_SGT:  // >
             result = builder->CreateICmpSGT(a, b, "gt_result");
             break;
-        case llvm::CmpInst::ICMP_EQ:   // =
+        case llvm::CmpInst::Predicate::ICMP_EQ:   // =
             result = builder->CreateICmpEQ(a, b, "eq_result");
-            break;
-        case llvm::CmpInst::ICMP_SLE:  // <=
-            result = builder->CreateICmpSLE(a, b, "le_result");
-            break;
-        case llvm::CmpInst::ICMP_SGE:  // >=
-            result = builder->CreateICmpSGE(a, b, "ge_result");
-            break;
-        case llvm::CmpInst::ICMP_NE:   // <>
-            result = builder->CreateICmpNE(a, b, "ne_result");
             break;
         default:
             addError("Unsupported comparison operation");
@@ -864,19 +989,10 @@ auto ForthLLVMCodegen::generateComparison(int predicate) -> void {
     }
     
     // Convert boolean result to FORTH convention (-1 for true, 0 for false)
+#ifdef WITH_REAL_LLVM
     auto minusOne = llvm::ConstantInt::get(cellType, -1);
     auto zero = llvm::ConstantInt::get(cellType, 0);
     result = builder->CreateSelect(result, minusOne, zero, "forth_bool");
-#else
-    // Mock version
-    switch (static_cast<llvm::CmpInst::Predicate>(predicate)) {
-        case llvm::CmpInst::Predicate::ICMP_SLT:
-            result = builder->CreateICmpSLT(a, b);
-            break;
-        default:
-            addError("Unsupported comparison operation");
-            return;
-    }
 #endif
     
     generateStackPush(result);
@@ -889,9 +1005,9 @@ auto ForthLLVMCodegen::generateIf(IfStatementNode& node) -> void {
     auto condCheck = builder->CreateICmpSLT(zero, condition); // condition != 0
     
     // Create basic blocks
-    auto thenBlock = createBasicBlock("if_then");
-    auto elseBlock = node.hasElse() ? createBasicBlock("if_else") : nullptr;
-    auto endBlock = createBasicBlock("if_end");
+    auto thenBlock = llvm::BasicBlock::Create(*context, "if_then", currentFunction);
+    auto elseBlock = node.hasElse() ? llvm::BasicBlock::Create(*context, "if_else", currentFunction) : nullptr;
+    auto endBlock = llvm::BasicBlock::Create(*context, "if_end", currentFunction);
     
     // Create conditional branch
     if (node.hasElse()) {
@@ -926,9 +1042,9 @@ auto ForthLLVMCodegen::generateIf(IfStatementNode& node) -> void {
 
 auto ForthLLVMCodegen::generateBeginUntil(BeginUntilLoopNode& node) -> void {
     // Create basic blocks for loop
-    auto loopBlock = createBasicBlock("loop_body");
-    auto testBlock = createBasicBlock("loop_test");
-    auto endBlock = createBasicBlock("loop_end");
+    auto loopBlock = llvm::BasicBlock::Create(*context, "loop_body", currentFunction);
+    auto testBlock = llvm::BasicBlock::Create(*context, "loop_test", currentFunction);
+    auto endBlock = llvm::BasicBlock::Create(*context, "loop_end", currentFunction);
     
     // Jump to loop body
     builder->CreateBr(loopBlock);
@@ -956,13 +1072,19 @@ auto ForthLLVMCodegen::generateBeginUntil(BeginUntilLoopNode& node) -> void {
 }
 
 auto ForthLLVMCodegen::createWordFunction(const std::string& name) -> llvm::Function* {
-    auto funcType = (name == "main") ? 
-        cellType :  // main returns int
-        llvm::Type::getVoidTy(*context); // FORTH words return void
-        
-    return module->getOrInsertFunction(name, funcType);
+    auto voidTy = llvm::Type::getVoidTy(*context);
+    auto funcType = llvm::FunctionType::get(voidTy, {}, false); // FORTH words return void
+    
+    auto funcCallee = module->getOrInsertFunction(name, funcType);
+    
+#ifdef WITH_REAL_LLVM
+    return llvm::cast<llvm::Function>(funcCallee.getCallee());
+#else
+    return static_cast<llvm::Function*>(funcCallee);
+#endif
 }
 
+// Remaining utility methods...
 auto ForthLLVMCodegen::generateBuiltinCall(const std::string& wordName) -> void {
     if (wordName == "DUP") {
         generateStackDup();
@@ -971,7 +1093,6 @@ auto ForthLLVMCodegen::generateBuiltinCall(const std::string& wordName) -> void 
     } else if (wordName == "SWAP") {
         generateStackSwap();
     } else if (wordName == ".") {
-        // Print top of stack (simplified)
         auto value = generateStackPop();
         // In real implementation, would call printf
     } else {
@@ -1007,8 +1128,11 @@ auto ForthLLVMCodegen::generateUnaryOp(const std::string& operation) -> void {
         auto zero = builder->getInt32(0);
         auto isNegative = builder->CreateICmpSLT(value, zero);
         auto negated = builder->CreateSub(zero, value);
-        // In real LLVM, would use CreateSelect
+#ifdef WITH_REAL_LLVM
+        result = builder->CreateSelect(isNegative, negated, value);
+#else
         result = negated; // Simplified
+#endif
     } else if (operation == "DUP") {
         generateStackPush(value); // Push it back
         generateStackPush(value); // Duplicate
@@ -1024,29 +1148,29 @@ auto ForthLLVMCodegen::generateUnaryOp(const std::string& operation) -> void {
 }
 
 auto ForthLLVMCodegen::generateVariableDeclaration(const std::string& name) -> void {
-    auto var = module->addGlobalVariable(name, cellType, false);
+#ifdef WITH_REAL_LLVM
+    auto zero = llvm::ConstantInt::get(cellType, 0);
+    auto var = module->createGlobalVariable(cellType, false, 
+                                          llvm::GlobalValue::PrivateLinkage, 
+                                          zero, name);
     variables[name] = var;
+#else
+    // Mock implementation
+    auto var = new llvm::GlobalVariable(name, cellType);
+    variables[name] = var;
+#endif
 }
 
 auto ForthLLVMCodegen::generatePrintString(const std::string& str) -> void {
     // In a real implementation, this would call printf
-    // For now, just add a comment
+    // For now, just add a comment or instruction
 }
 
-auto ForthLLVMCodegen::createBasicBlock(const std::string& name, llvm::Function* func) -> llvm::BasicBlock* {
-    llvm::Function* targetFunc = func ? func : currentFunction;
-    if (!targetFunc) {
-        addError("Cannot create basic block outside function context");
-        return nullptr;
-    }
-    return targetFunc->createBasicBlock(name);
-}
-
-auto ForthLLVMCodegen::addError(const std::string& message) -> void {
+auto ForthLLVMCodegen::addError(const std::string& message) const -> void {
     errors.push_back(message);
 }
 
-auto ForthLLVMCodegen::addError(const std::string& message, ASTNode& node) -> void {
+auto ForthLLVMCodegen::addError(const std::string& message, ASTNode& node) const -> void {
     std::ostringstream oss;
     oss << message << " at line " << node.getLine() << ", column " << node.getColumn();
     errors.push_back(oss.str());
@@ -1080,6 +1204,8 @@ auto ForthLLVMCodegen::emitLLVMIR(const std::string& filename) const -> std::str
 declare i32 @printf(i8*, ...)
 declare i32 @putchar(i32)
 declare void @exit(i32)
+declare void @forth_stack_push(i32)
+declare i32 @forth_stack_pop()
 )";
     
     std::string result = declarations + ir;
@@ -1185,7 +1311,7 @@ auto ForthLLVMCodegen::generateFunction(const std::string& name, WordDefinitionN
     
     // Set up new function
     currentFunction = func;
-    auto entryBlock = func->createBasicBlock("entry");
+    auto entryBlock = llvm::BasicBlock::Create(*context, "entry", func);
     builder->SetInsertPoint(entryBlock);
     
     // Generate function body
@@ -1193,7 +1319,7 @@ auto ForthLLVMCodegen::generateFunction(const std::string& name, WordDefinitionN
         child->accept(*this);
     }
     
-    builder->CreateRet(); // Void return
+    builder->CreateRetVoid(); // Void return
     
     // Restore context
     currentFunction = savedFunction;
@@ -1272,6 +1398,15 @@ auto ForthLLVMCodegen::generateESP32SpecificCode() -> void {
     // Generate ESP32-specific initialization code
 }
 
+auto ForthLLVMCodegen::createBasicBlock(const std::string& name, llvm::Function* func) -> llvm::BasicBlock* {
+    llvm::Function* targetFunc = func ? func : currentFunction;
+    if (!targetFunc) {
+        addError("Cannot create basic block outside function context");
+        return nullptr;
+    }
+    return llvm::BasicBlock::Create(*context, name, targetFunc);
+}
+
 // High-level compiler implementation
 ForthCompiler::ForthCompiler() 
     : analyzer(std::make_unique<SemanticAnalyzer>())
@@ -1291,7 +1426,8 @@ ForthCompiler::ForthCompiler(const CodegenConfig& cfg)
 
 ForthCompiler::~ForthCompiler() = default;
 
-auto ForthCompiler::compile(const std::string& forthCode) -> std::unique_ptr<llvm::Module, ModuleDeleter> {    errors.clear();
+auto ForthCompiler::compile(const std::string& forthCode) -> std::unique_ptr<llvm::Module, ModuleDeleter> {
+    errors.clear();
     
     try {
         // Lexical analysis
@@ -1432,9 +1568,21 @@ auto getXtensaTargetTriple() -> std::string {
 }
 
 auto createXtensaTargetMachine() -> std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter> {
+#ifdef WITH_REAL_LLVM
     // In a real implementation, this would create an actual LLVM TargetMachine
     // for the Xtensa architecture used by ESP32
+    std::string error;
+    auto target = llvm::TargetRegistry::lookupTarget("xtensa-esp32-elf", error);
+    if (!target) {
+        return nullptr;
+    }
+    
+    llvm::TargetOptions opt;
+    auto tm = target->createTargetMachine("xtensa-esp32-elf", "generic", "", opt, llvm::Reloc::PIC_);
+    return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(tm);
+#else
     return std::unique_ptr<llvm::TargetMachine, TargetMachineDeleter>(new llvm::TargetMachine());
+#endif
 }
 
 auto getForthCellType(llvm::LLVMContext& context) -> llvm::Type* {
@@ -1442,12 +1590,14 @@ auto getForthCellType(llvm::LLVMContext& context) -> llvm::Type* {
 }
 
 auto getForthStackType(llvm::LLVMContext& context, size_t size) -> llvm::Type* {
-    // In a real implementation, this would return an array type
-    // ArrayType::get(getForthCellType(context), size)
-    return llvm::Type::getInt32Ty(context); // Simplified
+#ifdef WITH_REAL_LLVM
+    return llvm::ArrayType::get(getForthCellType(context), size);
+#else
+    return llvm::ArrayType::get(getForthCellType(context), size);
+#endif
 }
 
-auto optimizeModule(llvm::Module* module, llvm::TargetMachine* target) -> void {
+auto optimizeModule(llvm::Module* /* module */, llvm::TargetMachine* /* target */) -> void {
     // In a real implementation, this would run LLVM optimization passes
     // optimized for the target architecture
 }
@@ -1455,10 +1605,15 @@ auto optimizeModule(llvm::Module* module, llvm::TargetMachine* target) -> void {
 auto addESP32Attributes(llvm::Function* func) -> void {
     // In a real implementation, this would add ESP32-specific function attributes
     // for optimal code generation (calling conventions, etc.)
+#ifdef WITH_REAL_LLVM
     if (func) {
-        func->addAttribute("target-cpu=esp32");
-        func->addAttribute("target-features=+fp");
+        func->addFnAttr("target-cpu", "esp32");
+        func->addFnAttr("target-features", "+fp");
     }
+#else
+    // Mock implementation - just record that we would add attributes
+    (void)func; // Suppress unused parameter warning
+#endif
 }
 
 } // namespace LLVMUtils
@@ -1472,7 +1627,7 @@ void ModuleDeleter::operator()(llvm::Module* ptr) {
     delete ptr;
 }
 
-void IRBuilderDeleter::operator()(llvm::IRBuilder<>* ptr) {
+void IRBuilderDeleter::operator()(llvm::IRBuilderDefault<>* ptr) {
     delete ptr;
 }
 
