@@ -141,6 +141,10 @@ private:
     std::string getForthType(ASTNode* node);
     std::string generateTypeConversion(const std::string& value, const std::string& fromType, const std::string& toType);
     
+    // Helper methods (these were missing!)
+    bool isBuiltinWord(const std::string& word) const;
+    std::string escapeCString(const std::string& str);
+    
     // Error and warning management
     void addError(const std::string& message);
     void addWarning(const std::string& message);
