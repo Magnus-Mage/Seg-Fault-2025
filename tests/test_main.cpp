@@ -4,12 +4,12 @@
 extern auto registerLexerTests(TestRunner& runner) -> void;
 extern auto registerParserTests(TestRunner& runner) -> void;
 extern auto registerSemanticTests(TestRunner& runner) -> void;
-extern auto registerLLVMTests(TestRunner& runner) -> void;
+extern auto registerCCodegenTests(TestRunner& runner) -> void;  // Updated from LLVM to C
 
 auto main() -> int 
 {
     std::cout << "FORTH-ESP32 Compiler Test Suite\n";
-    std::cout << "Phase 4: Semantic Analysis & LLVM Code Generation Tests\n";
+    std::cout << "Phase 4: Semantic Analysis & C Code Generation Tests\n";
     
     TestRunner runner;
     
@@ -23,8 +23,8 @@ auto main() -> int
     std::cout << "Registering semantic analysis tests...\n";
     registerSemanticTests(runner);
     
-    std::cout << "Registering LLVM code generation tests...\n";
-    registerLLVMTests(runner);
+    std::cout << "Registering C code generation tests...\n";
+    registerCCodegenTests(runner);  // Updated from LLVM
 
     const int failures = runner.runAll();
     
@@ -35,7 +35,7 @@ auto main() -> int
         std::cout << "✅ Parser generating proper AST\n";
         std::cout << "✅ Dictionary system functional\n";
         std::cout << "✅ Semantic analysis operational\n";
-        std::cout << "✅ LLVM code generation working\n";
+        std::cout << "✅ C code generation working\n";
         std::cout << "✅ Stack effect analysis functional\n";
         std::cout << "✅ Error handling working\n";
         std::cout << "\nReady for Phase 5: ESP32 Integration & Optimization\n";
