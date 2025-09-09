@@ -4,6 +4,7 @@
 #include "dictionary/dictionary.h"
 
 #ifdef WITH_REAL_LLVM
+#include "llvm/Support/raw_ostream.h"
 #include "llvm/IR/ConstantFolder.h"
 #include "llvm/IR/IRBuilderFolder.h"
 #include <llvm/IR/LLVMContext.h>
@@ -22,6 +23,7 @@
 #include <llvm/Target/TargetOptions.h>
 #include <llvm/MC/TargetRegistry.h>
 #include <llvm/TargetParser/Host.h>
+#include <llvm/TargetParser/Triple.h>
 #include <llvm/Support/FileSystem.h>
 #include <llvm/Support/raw_ostream.h>
 #include <llvm/IR/LegacyPassManager.h>
@@ -35,6 +37,7 @@
 #include <iostream>
 #include <algorithm>
 #include <fstream>
+#include <string>
 
 #ifndef WITH_REAL_LLVM
 // Mock LLVM implementation for development and testing
@@ -302,11 +305,15 @@ namespace llvm {
                 // Print basic blocks
                 for (const llvm::BasicBlock &bb : *func) {
                     os << bb.getName().data() << ":\n";
-                    for (const llvm::Instruction &instr : bb) {
-                        os << "  " << instr << "\n";
-                    }
-                }
-                
+      	            for (const llvm::Instruction &instr : bb) {
+			    std::string instr_str;
+			    llvm::raw_string_ostream r_str_os(instr_str);
+			    instr.print(r_str_os);
+			    r_str_os.flush();
+
+    			    os << "  " << instr_str << "\n";
+			}
+		}
                 os << "}\n\n";
             }
         }
@@ -319,6 +326,7 @@ namespace llvm {
     };
     
     // FIXED: Use proper template signature for IRBuilder
+    /*
     template<typename T = void>
     class IRBuilder {
     private:
@@ -563,6 +571,7 @@ namespace llvm {
             return result;
         }
     };
+    */
     
     class TargetMachine {
     public:
@@ -572,6 +581,7 @@ namespace llvm {
     };
     
     // Instruction types for compatibility
+    /*
     namespace Instruction {
         enum BinaryOps {
             Add, Sub, Mul, UDiv, SDiv
@@ -583,7 +593,7 @@ namespace llvm {
             ICMP_EQ, ICMP_NE, ICMP_UGT, ICMP_UGE, ICMP_ULT, ICMP_ULE,
             ICMP_SGT, ICMP_SGE, ICMP_SLT, ICMP_SLE
         };
-    }
+    }*/
 }
 #endif // WITH_REAL_LLVM
 
@@ -614,8 +624,8 @@ ForthLLVMCodegen::ForthLLVMCodegen(const std::string& moduleName)
 #else
     // Keep your existing mock implementation as fallback
     context = std::unique_ptr<llvm::LLVMContext, LLVMContextDeleter>(new llvm::LLVMContext());
-    module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName));
-    builder = std::unique_ptr<llvm::IRBuilderDefault<>, IRBuilderDeleter>(new llvm::IRBuilderDefault<>(*context));
+    module = std::unique_ptr<llvm::Module, ModuleDeleter>(new llvm::Module(moduleName, *context));
+    builder = std::unique_ptr<llvm::IRBuilder<>, IRBuilderDeleter>(new llvm::IRBuilder<>(*context));
     
     initializeLLVM();
     createForthRuntime();
@@ -689,16 +699,31 @@ auto ForthLLVMCodegen::createForthRuntime() -> void {
     createRuntimeHelpers();
 #else
     // Mock implementation - create mock globals
-    stackBase = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_data_stack", cellType));
-    stackPointer = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_sp", cellType));
-    returnStackBase = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_return_stack", cellType));
-    returnStackPointer = reinterpret_cast<llvm::Value*>(new llvm::GlobalVariable("forth_rsp", cellType));
+    stackBase = new llvm::GlobalVariable(
+	    *module,                            // Module&
+	    cellType,                           // Type*
+	    false,                              // isConstant
+	    llvm::GlobalValue::ExternalLinkage, // Linkage
+	    nullptr,                            // Initializer (can be nullptr for extern)
+	    "forth_data_stack"                  // Name
+    );
+    stackPointer = new llvm::GlobalVariable(*module, cellType, false,
+                                        llvm::GlobalValue::ExternalLinkage, nullptr,
+                                        "forth_sp");
+
+    returnStackBase = new llvm::GlobalVariable(*module, cellType, false,
+                                           llvm::GlobalValue::ExternalLinkage, nullptr,
+                                           "forth_return_stack");
+
+    returnStackPointer = new llvm::GlobalVariable(*module, cellType, false,
+                                              llvm::GlobalValue::ExternalLinkage, nullptr,
+                                              "forth_rsp");
 #endif
 }
 
 auto ForthLLVMCodegen::setTarget(const std::string& triple) -> void {
-    targetTriple = triple;
-    module->setTargetTriple(llvm::Triple(triple));
+   auto targetTriple = llvm::Triple(triple);
+   module->setTargetTriple(targetTriple);
 }
 
 auto ForthLLVMCodegen::generateModule(ProgramNode& program) -> std::unique_ptr<llvm::Module, ModuleDeleter> {
