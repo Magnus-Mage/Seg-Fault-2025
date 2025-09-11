@@ -138,6 +138,7 @@ public:
     void visit(BeginUntilLoopNode& node) override;
     void visit(MathOperationNode& node) override;
     void visit(VariableDeclarationNode& node) override;
+	
 
 private:
     // ========================================================================
@@ -211,7 +212,7 @@ private:
     // ========================================================================
     
     void generateModularRuntime();
-    std::string generateCoreRuntimeHeader();
+    std::string generateCoreRuntimeHeader() const;
     std::string generateStackImplementation();
     std::string generateMathImplementation();
     std::string generateCompareImplementation();
@@ -370,5 +371,10 @@ namespace ForthCodegenUtils {
     bool validateGeneratedCode(const std::string& code);
     std::vector<std::string> findUndefinedSymbols(const std::string& code);
 }
+
+// ============================================================================
+// Factory for Creating Codegen Instances
+// ============================================================================
+
 
 #endif // FORTH_C_CODEGEN_H
