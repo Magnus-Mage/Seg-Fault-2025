@@ -223,7 +223,7 @@ auto printSemanticResults(const SemanticAnalyzer& analyzer, bool verbose) -> voi
 
 auto printCodegenResults(const ForthCCodegen& codegen, bool showCode) -> void {
     std::cout << "\n" << std::string(60, '=') << "\n";
-    std::cout << "C CODE GENERATION RESULTS\n";  // Updated from LLVM
+    std::cout << "C CODE GENERATION RESULTS\n";
     std::cout << std::string(60, '=') << "\n";
     
     if (codegen.hasErrors()) {
@@ -244,20 +244,25 @@ auto printCodegenResults(const ForthCCodegen& codegen, bool showCode) -> void {
         if (showCode) {
             std::cout << "\nGenerated C Code (Header):\n";
             std::cout << std::string(40, '-') << "\n";
-            std::string header = codegen.getHeaderCode();
-            if (header.length() > 1000) {
-                std::cout << header.substr(0, 1000) << "\n... (truncated)\n";
-            } else {
-                std::cout << header << "\n";
+            const auto& files = codegen.getGeneratedFiles();  // Use const reference
+            if (!files.empty()) {
+                std::string header = files[0].second.str();
+                if (header.length() > 1000) {
+                    std::cout << header.substr(0, 1000) << "\n... (truncated)\n";
+                } else {
+                    std::cout << header << "\n";
+                }
             }
             
             std::cout << "\nGenerated C Code (Source):\n";
             std::cout << std::string(40, '-') << "\n";
-            std::string source = codegen.getCompleteCode();
-            if (source.length() > 1000) {
-                std::cout << source.substr(0, 1000) << "\n... (truncated)\n";
-            } else {
-                std::cout << source << "\n";
+            if (files.size() > 1) {  // Reuse the same files variable
+                std::string source = files[1].second.str();
+                if (source.length() > 1000) {
+                    std::cout << source.substr(0, 1000) << "\n... (truncated)\n";
+                } else {
+                    std::cout << source << "\n";
+                }
             }
             std::cout << std::string(40, '-') << "\n";
         }
@@ -482,7 +487,7 @@ auto main(int argc, char* argv[]) -> int {
         auto codegen = ForthCodegenFactory::create(
             target == "esp32c3" ? ForthCodegenFactory::TargetType::ESP32_C3 :
             target == "esp32s3" ? ForthCodegenFactory::TargetType::ESP32_S3 :
-            ForthCodegenFactory::TargetType::ESP32_GENERIC
+            ForthCodegenFactory::TargetType::ESP32
         );
         
         codegen->setSemanticAnalyzer(&analyzer);
@@ -517,37 +522,21 @@ auto main(int argc, char* argv[]) -> int {
         }
         
         // Generate output file if requested
-        if (!outputFile.empty() && codegenSuccess && !codegen->hasErrors()) {
-            std::cout << "\nGenerating output file: " << outputFile << "\n";
-            
-            if (outputFile.ends_with(".c")) {
-                // Generate C source file
-                if (codegen->writeSourceFile(outputFile)) {
-                    std::cout << "✅ C source written to " << outputFile << "\n";
-                } else {
-                    std::cout << "❌ Failed to write C source\n";
-                }
-            } else if (outputFile.ends_with(".h")) {
-                // Generate C header file
-                if (codegen->writeHeaderFile(outputFile)) {
-                    std::cout << "✅ C header written to " << outputFile << "\n";
-                } else {
-                    std::cout << "❌ Failed to write C header\n";
-                }
-            } else {
-                // Generate both header and source
-                std::string baseName = outputFile;
-                if (baseName.find('.') != std::string::npos) {
-                    baseName = baseName.substr(0, baseName.find_last_of('.'));
-                }
-                if (codegen->writeToFiles(baseName)) {
-                    std::cout << "✅ C files written to " << baseName << ".h and " << baseName << ".c\n";
-                } else {
-                    std::cout << "❌ Failed to write C files\n";
-                }
-            }
-        }
-        
+	if (!outputFile.empty() && codegenSuccess && !codegen->hasErrors()) {
+	    std::cout << "\nGenerating output file: " << outputFile << "\n";
+	    
+	    // Always generate both header and source files
+	    std::string baseName = outputFile;
+	    if (baseName.find('.') != std::string::npos) {
+		baseName = baseName.substr(0, baseName.find_last_of('.'));
+	    }
+	    
+	    if (codegen->writeToFiles(baseName)) {
+		std::cout << "✅ C files written to directory: " << baseName << "\n";
+	    } else {
+		std::cout << "❌ Failed to write C files\n";
+	    }
+	}
         // Create ESP-IDF project if requested
         if (createESP32Project && codegenSuccess && !codegen->hasErrors()) {
             std::string projectPath = fs::current_path() / "esp32_project";
@@ -625,7 +614,7 @@ auto main(int argc, char* argv[]) -> int {
             
             try {
                 // Test the complete compilation pipeline
-                auto testCodegen = ForthCodegenFactory::create(ForthCodegenFactory::TargetType::ESP32_GENERIC);
+                auto testCodegen = ForthCodegenFactory::create(ForthCodegenFactory::TargetType::ESP32);
                 testCodegen->setSemanticAnalyzer(&analyzer);
                 testCodegen->setDictionary(&parser.getDictionary());
                 
