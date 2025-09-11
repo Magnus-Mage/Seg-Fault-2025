@@ -97,6 +97,9 @@ public:
     // Main Code Generation Interface
     // ========================================================================
     
+    std::string getCompleteCode() const;
+    std::string getHeaderCode() const;
+    bool writeESPIDFProject(const std::string& outputDir) const;
     bool generateCode(const ProgramNode& program);
     bool writeToFiles(const std::string& outputDir);
     
@@ -317,6 +320,7 @@ class ForthCodegenFactory {
 public:
     enum class TargetType {
         ESP32,          // Original ESP32
+	ESP32_GENERIC,
         ESP32_C3,       // RISC-V based
         ESP32_S3,       // With AI acceleration
         ESP32_C6,       // WiFi 6 support

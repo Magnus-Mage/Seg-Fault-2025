@@ -244,7 +244,9 @@ auto printCodegenResults(const ForthCCodegen& codegen, bool showCode) -> void {
         if (showCode) {
             std::cout << "\nGenerated C Code (Header):\n";
             std::cout << std::string(40, '-') << "\n";
-            std::string header = codegen.getHeaderCode();
+            auto files = codegen.getGeneratedFiles();
+	    std::string header = files[0].second.str(); // Adjust index as needed
+	   
             if (header.length() > 1000) {
                 std::cout << header.substr(0, 1000) << "\n... (truncated)\n";
             } else {
@@ -253,7 +255,9 @@ auto printCodegenResults(const ForthCCodegen& codegen, bool showCode) -> void {
             
             std::cout << "\nGenerated C Code (Source):\n";
             std::cout << std::string(40, '-') << "\n";
-            std::string source = codegen.getCompleteCode();
+            auto files = codegen.getGeneratedFiles();
+	    std::string source = files[1].second.str(); // Adjust index as needed
+	  
             if (source.length() > 1000) {
                 std::cout << source.substr(0, 1000) << "\n... (truncated)\n";
             } else {
@@ -482,7 +486,7 @@ auto main(int argc, char* argv[]) -> int {
         auto codegen = ForthCodegenFactory::create(
             target == "esp32c3" ? ForthCodegenFactory::TargetType::ESP32_C3 :
             target == "esp32s3" ? ForthCodegenFactory::TargetType::ESP32_S3 :
-            ForthCodegenFactory::TargetType::ESP32_GENERIC
+            ForthCodegenFactory::TargetType::ESP32
         );
         
         codegen->setSemanticAnalyzer(&analyzer);
@@ -625,7 +629,7 @@ auto main(int argc, char* argv[]) -> int {
             
             try {
                 // Test the complete compilation pipeline
-                auto testCodegen = ForthCodegenFactory::create(ForthCodegenFactory::TargetType::ESP32_GENERIC);
+                auto testCodegen = ForthCodegenFactory::create(ForthCodegenFactory::TargetType::ESP32);
                 testCodegen->setSemanticAnalyzer(&analyzer);
                 testCodegen->setDictionary(&parser.getDictionary());
                 

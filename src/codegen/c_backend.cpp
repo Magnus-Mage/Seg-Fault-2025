@@ -1267,7 +1267,7 @@ bool ForthCCodegen::isSimpleCondition(const IfStatementNode& node) const {
     // Check if the condition is simple enough for ternary optimization
     if (!node.getThenBranch() || !node.getElseBranch()) return false;
     
-    auto thenChildren = node.getThenBranch()->getChildren();
+    const auto& thenChildren = node.getThenBranch()->getChildren();
     auto elseChildren = node.getElseBranch()->getChildren();
     
     return thenChildren.size() == 1 && elseChildren.size() == 1;
@@ -1473,7 +1473,8 @@ void app_main(void) {
 }
 )";
     
-    generatedFiles.push_back({"main.c", main});
+    generatedFiles.emplace_back("main.c", std::ostringstream());
+    generatedFiles.back().second << main.str();
 }
 
 void ForthCCodegen::resolveForwardReferences() {
@@ -1488,7 +1489,9 @@ void ForthCCodegen::resolveForwardReferences() {
             }
         }
         
-        generatedFiles.push_back({"forth_forward.c", forward});
+        generatedFiles.emplace_back("forth_forward.c", std::ostringstream());
+	generatedFiles.back().second << forward.str();
+	
     }
 }
 
