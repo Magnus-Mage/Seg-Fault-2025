@@ -1833,10 +1833,9 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 // ============================================================================
 // Factory Implementation
 // ============================================================================
-
 namespace ForthCodegenFactory {
 
-std::unique_ptr<ForthCCodegen> ForthCodegenFactory::create(ForthCodegenFactory::TargetType target) {
+std::unique_ptr<ForthCCodegen> create(TargetType target) {
     auto codegen = std::make_unique<ForthCCodegen>("forth_program");
 
     switch (target) {
@@ -1855,6 +1854,67 @@ std::unique_ptr<ForthCCodegen> ForthCodegenFactory::create(ForthCodegenFactory::
     }
 
     return codegen;
+}
+
+ForthCCodegen::ESP32Config getESP32Config(TargetType target) {
+    ForthCCodegen::ESP32Config config;
+    
+    switch (target) {
+        case TargetType::ESP32_C3:
+            config.cpuFreq = 160;
+            break;
+        case TargetType::ESP32_S3:
+            config.cpuFreq = 240;
+            config.useDMA = true;
+            break;
+        default:
+            break;
+    }
+    
+    return config;
+}
+
+TargetCapabilities getTargetCapabilities(TargetType target) {
+    TargetCapabilities caps = {};
+    
+    switch (target) {
+        case TargetType::ESP32:
+            caps.hasWiFi = true;
+            caps.hasBluetooth = true;
+            caps.maxGPIO = 39;
+            caps.adcChannels = 18;
+            caps.dacChannels = 2;
+            caps.architecture = "xtensa";
+            break;
+        case TargetType::ESP32_C3:
+            caps.hasWiFi = true;
+            caps.hasBluetooth = true;
+            caps.maxGPIO = 21;
+            caps.adcChannels = 6;
+            caps.dacChannels = 0;
+            caps.architecture = "riscv";
+            break;
+        case TargetType::ESP32_S3:
+            caps.hasWiFi = true;
+            caps.hasBluetooth = false;
+            caps.hasUSB = true;
+            caps.maxGPIO = 48;
+            caps.adcChannels = 20;
+            caps.dacChannels = 2;
+            caps.hasPSRAM = true;
+            caps.architecture = "xtensa";
+            break;
+        default:
+            caps.architecture = "unknown";
+            break;
+    }
+    
+    return caps;
+}
+
+void configureForTarget(ForthCCodegen& codegen, TargetType target) {
+    auto config = getESP32Config(target);
+    codegen.setESP32Config(config);
 }
 
 } // namespace ForthCodegenFactory

@@ -317,8 +317,7 @@ private:
 // Code Generator Factory
 // ============================================================================
 
-class ForthCodegenFactory {
-public:
+namespace ForthCodegenFactory {
     enum class TargetType {
         ESP32,          // Original ESP32
 	ESP32_GENERIC,
@@ -346,13 +345,12 @@ public:
         std::string architecture;  // xtensa, riscv
     };
     
-    static std::unique_ptr<ForthCCodegen> create(TargetType target);
-    static ForthCCodegen::ESP32Config getESP32Config(TargetType target);
-    static TargetCapabilities getTargetCapabilities(TargetType target);
+    std::unique_ptr<ForthCCodegen> create(TargetType target);
+    ForthCCodegen::ESP32Config getESP32Config(TargetType target);
+    TargetCapabilities getTargetCapabilities(TargetType target);
     
-private:
-    static void configureForTarget(ForthCCodegen& codegen, TargetType target);
-};
+    void configureForTarget(ForthCCodegen& codegen, TargetType target);
+}
 
 // ============================================================================
 // Utility Functions
