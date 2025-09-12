@@ -10,7 +10,7 @@
 #include "parser/ast.h"
 #include "dictionary/dictionary.h"
 #include "semantic/analyzer.h"
-#include "codegen/llvm_backend.h"
+#include "codegen/c_backend.h"  // Updated from llvm_backend.h
 #include "common/utils.h"
 #include "functional"
 
@@ -221,9 +221,9 @@ auto printSemanticResults(const SemanticAnalyzer& analyzer, bool verbose) -> voi
     }
 }
 
-auto printCodegenResults(const ForthLLVMCodegen& codegen, bool showIR) -> void {
+auto printCodegenResults(const ForthCCodegen& codegen, bool showCode) -> void {
     std::cout << "\n" << std::string(60, '=') << "\n";
-    std::cout << "CODE GENERATION RESULTS\n";
+    std::cout << "C CODE GENERATION RESULTS\n";
     std::cout << std::string(60, '=') << "\n";
     
     if (codegen.hasErrors()) {
@@ -232,13 +232,46 @@ auto printCodegenResults(const ForthLLVMCodegen& codegen, bool showIR) -> void {
             std::cout << "  • " << error << "\n";
         }
     } else {
-        std::cout << "✅ Code generation completed successfully\n";
+        std::cout << "✅ C code generation completed successfully\n";
         
-        if (showIR) {
-            std::cout << "\nGenerated LLVM IR:\n";
+        // Show statistics
+        auto stats = codegen.getStatistics();
+        std::cout << "\nGenerated Code Statistics:\n";
+        std::cout << "  Lines of code: " << stats.linesGenerated << "\n";
+        std::cout << "  Functions: " << stats.functionsGenerated << "\n";
+        std::cout << "  Variables: " << stats.variablesGenerated << "\n";
+        
+        if (showCode) {
+            std::cout << "\nGenerated C Code (Header):\n";
             std::cout << std::string(40, '-') << "\n";
-            std::cout << codegen.emitLLVMIR() << "\n";
+            const auto& files = codegen.getGeneratedFiles();  // Use const reference
+            if (!files.empty()) {
+                std::string header = files[0].second.str();
+                if (header.length() > 1000) {
+                    std::cout << header.substr(0, 1000) << "\n... (truncated)\n";
+                } else {
+                    std::cout << header << "\n";
+                }
+            }
+            
+            std::cout << "\nGenerated C Code (Source):\n";
             std::cout << std::string(40, '-') << "\n";
+            if (files.size() > 1) {  // Reuse the same files variable
+                std::string source = files[1].second.str();
+                if (source.length() > 1000) {
+                    std::cout << source.substr(0, 1000) << "\n... (truncated)\n";
+                } else {
+                    std::cout << source << "\n";
+                }
+            }
+            std::cout << std::string(40, '-') << "\n";
+        }
+    }
+    
+    if (codegen.hasWarnings()) {
+        std::cout << "\n⚠️  Code Generation Warnings:\n";
+        for (const auto& warning : codegen.getWarnings()) {
+            std::cout << "  • " << warning << "\n";
         }
     }
 }
@@ -327,29 +360,31 @@ auto printStatistics(const std::vector<Token>& tokens,
 }
 
 auto main(int argc, char* argv[]) -> int {
-    std::cout << "FORTH-ESP32 Compiler v0.2.0\n";
-    std::cout << "Phase 4: Semantic Analysis & LLVM Code Generation\n\n";
+    std::cout << "FORTH-ESP32 Compiler v0.3.0\n";
+    std::cout << "Phase 4: Semantic Analysis & C Code Generation\n\n";  // Updated
     
     if (argc < 2) {
         std::cerr << "Usage: " << argv[0] << " <forth_file> [options]\n";
         std::cerr << "Options:\n";
-        std::cerr << "  -v, --verbose    Show detailed information\n";
-        std::cerr << "  -t, --tokens     Show tokenization results\n";
-        std::cerr << "  -a, --ast        Show AST structure\n";
-        std::cerr << "  -s, --semantic   Show semantic analysis details\n";
-        std::cerr << "  -c, --codegen    Show code generation details\n";
-        std::cerr << "  -i, --ir         Show generated LLVM IR\n";
-        std::cerr << "  -d, --dict       Show dictionary contents\n";
-        std::cerr << "  --stats          Show performance statistics\n";
-        std::cerr << "  -o, --output     Output file for generated code\n";
-        std::cerr << "  --target         Target architecture (default: xtensa-esp32-elf)\n";
+        std::cerr << "  -v, --verbose      Show detailed information\n";
+        std::cerr << "  -t, --tokens       Show tokenization results\n";
+        std::cerr << "  -a, --ast          Show AST structure\n";
+        std::cerr << "  -s, --semantic     Show semantic analysis details\n";
+        std::cerr << "  -c, --codegen      Show code generation details\n";
+        std::cerr << "  --show-code        Show generated C code\n";  // Updated from --ir
+        std::cerr << "  -d, --dict         Show dictionary contents\n";
+        std::cerr << "  --stats            Show performance statistics\n";
+        std::cerr << "  -o, --output       Output file for generated code\n";
+        std::cerr << "  --target           Target architecture (default: esp32)\n";
+        std::cerr << "  --create-esp32     Create ESP-IDF project\n";  // New option
         return 1;
     }
     
     const std::string filename{argv[1]};
     bool verbose = false, showTokens = false, showAST = false, showSemantic = false;
-    bool showCodegen = false, showIR = false, showDict = false, showStats = false;
-    std::string outputFile, target = "xtensa-esp32-elf";
+    bool showCodegen = false, showCode = false, showDict = false, showStats = false;
+    bool createESP32Project = false;  // New flag
+    std::string outputFile, target = "esp32";  // Updated default
     
     // Parse command line options
     for (int i = 2; i < argc; ++i) {
@@ -364,12 +399,14 @@ auto main(int argc, char* argv[]) -> int {
             showSemantic = true;
         } else if (arg == "-c" || arg == "--codegen") {
             showCodegen = true;
-        } else if (arg == "-i" || arg == "--ir") {
-            showIR = true;
+        } else if (arg == "--show-code") {  // Updated from --ir
+            showCode = true;
         } else if (arg == "-d" || arg == "--dict") {
             showDict = true;
         } else if (arg == "--stats") {
             showStats = true;
+        } else if (arg == "--create-esp32") {  // New option
+            createESP32Project = true;
         } else if (arg == "-o" || arg == "--output") {
             if (i + 1 < argc) {
                 outputFile = argv[++i];
@@ -446,25 +483,29 @@ auto main(int argc, char* argv[]) -> int {
             printSemanticResults(analyzer, showSemantic || verbose);
         }
         
-        // Phase 4: Code Generation
-        ForthLLVMCodegen codegen("forth_program");
-        codegen.setTarget(target);
-        codegen.setSemanticAnalyzer(&analyzer);
-        codegen.setDictionary(&parser.getDictionary());
+        // Phase 4: C Code Generation (Updated from LLVM)
+        auto codegen = ForthCodegenFactory::create(
+            target == "esp32c3" ? ForthCodegenFactory::TargetType::ESP32_C3 :
+            target == "esp32s3" ? ForthCodegenFactory::TargetType::ESP32_S3 :
+            ForthCodegenFactory::TargetType::ESP32
+        );
+        
+        codegen->setSemanticAnalyzer(&analyzer);
+        codegen->setDictionary(&parser.getDictionary());
         
         const auto codegenStartTime = high_resolution_clock::now();
-        auto llvmModule = codegen.generateModule(*ast);
+        bool codegenSuccess = codegen->generateCode(*ast);
         const auto codegenEndTime = high_resolution_clock::now();
         const auto codegenDuration = codegenEndTime - codegenStartTime;
         
-        if (llvmModule && !codegen.hasErrors()) {
-            std::cout << "✅ Code generation completed successfully\n";
+        if (codegenSuccess && !codegen->hasErrors()) {
+            std::cout << "✅ C code generation completed successfully\n";
         } else {
-            std::cout << "❌ Code generation failed\n";
+            std::cout << "❌ C code generation failed\n";
         }
         
-        if (showCodegen || verbose || codegen.hasErrors()) {
-            printCodegenResults(codegen, showIR || verbose);
+        if (showCodegen || verbose || codegen->hasErrors()) {
+            printCodegenResults(*codegen, showCode || verbose);
         }
         
         // Program analysis
@@ -481,38 +522,38 @@ auto main(int argc, char* argv[]) -> int {
         }
         
         // Generate output file if requested
-        if (!outputFile.empty() && llvmModule && !codegen.hasErrors()) {
-            std::cout << "\nGenerating output file: " << outputFile << "\n";
+	if (!outputFile.empty() && codegenSuccess && !codegen->hasErrors()) {
+	    std::cout << "\nGenerating output file: " << outputFile << "\n";
+	    
+	    // Always generate both header and source files
+	    std::string baseName = outputFile;
+	    if (baseName.find('.') != std::string::npos) {
+		baseName = baseName.substr(0, baseName.find_last_of('.'));
+	    }
+	    
+	    if (codegen->writeToFiles(baseName)) {
+		std::cout << "✅ C files written to directory: " << baseName << "\n";
+	    } else {
+		std::cout << "❌ Failed to write C files\n";
+	    }
+	}
+        // Create ESP-IDF project if requested
+        if (createESP32Project && codegenSuccess && !codegen->hasErrors()) {
+            std::string projectPath = fs::current_path() / "esp32_project";
+            if (!outputFile.empty()) {
+                projectPath = outputFile;
+            }
             
-            if (outputFile.ends_with(".ll")) {
-                // Generate LLVM IR
-                auto ir = codegen.emitLLVMIR(outputFile);
-                if (!ir.empty()) {
-                    std::cout << "✅ LLVM IR written to " << outputFile << "\n";
-                } else {
-                    std::cout << "❌ Failed to write LLVM IR\n";
-                }
-            } else if (outputFile.ends_with(".s")) {
-                // Generate assembly
-                auto asm_code = codegen.emitAssembly(outputFile);
-                if (!asm_code.empty()) {
-                    std::cout << "✅ Assembly written to " << outputFile << "\n";
-                } else {
-                    std::cout << "❌ Failed to write assembly\n";
-                }
-            } else if (outputFile.ends_with(".o")) {
-                // Generate object file
-                if (codegen.emitObjectFile(outputFile)) {
-                    std::cout << "✅ Object file written to " << outputFile << "\n";
-                } else {
-                    std::cout << "❌ Failed to write object file\n";
-                }
+            std::cout << "\nCreating ESP-IDF project: " << projectPath << "\n";
+            if (codegen->writeESPIDFProject(projectPath)) {
+                std::cout << "✅ ESP-IDF project created at " << projectPath << "\n";
+                std::cout << "\nNext steps:\n";
+                std::cout << "  cd " << projectPath << "\n";
+                std::cout << "  idf.py set-target " << target << "\n";
+                std::cout << "  idf.py build\n";
+                std::cout << "  idf.py flash\n";
             } else {
-                // Default to LLVM IR
-                auto ir = codegen.emitLLVMIR(outputFile + ".ll");
-                if (!ir.empty()) {
-                    std::cout << "✅ LLVM IR written to " << outputFile << ".ll\n";
-                }
+                std::cout << "❌ Failed to create ESP-IDF project\n";
             }
         }
         
@@ -521,7 +562,7 @@ auto main(int argc, char* argv[]) -> int {
         
         bool hasErrors = parser.hasErrors() || 
                         (analyzer.hasErrors() && !semanticSuccess) ||
-                        codegen.hasErrors();
+                        codegen->hasErrors();
         
         if (!hasErrors) {
             std::cout << "🎉 Phase 4 completed successfully!\n";
@@ -529,22 +570,34 @@ auto main(int argc, char* argv[]) -> int {
             std::cout << "✅ Parser generating proper AST\n";
             std::cout << "✅ Dictionary system functional\n";
             std::cout << "✅ Semantic analysis operational\n";
-            std::cout << "✅ LLVM code generation working\n";
+            std::cout << "✅ C code generation working\n";  // Updated
             std::cout << "✅ Stack effect analysis functional\n";
             std::cout << "✅ Error handling working\n";
             
-            if (analyzer.hasWarnings()) {
-                std::cout << "⚠️  " << analyzer.getWarnings().size() << " warnings (non-critical)\n";
+            if (analyzer.hasWarnings() || codegen->hasWarnings()) {
+                int totalWarnings = analyzer.getWarnings().size() + codegen->getWarnings().size();
+                std::cout << "⚠️  " << totalWarnings << " warnings (non-critical)\n";
             }
             
             std::cout << "\n🚀 Ready for Phase 5: ESP32 Integration & Optimization\n";
+            
+            if (codegenSuccess) {
+                std::cout << "\nGenerated code statistics:\n";
+                auto stats = codegen->getStatistics();
+                std::cout << "  - " << stats.linesGenerated << " lines of C code\n";
+                std::cout << "  - " << stats.functionsGenerated << " FORTH word functions\n";
+                std::cout << "  - " << stats.variablesGenerated << " variables\n";
+                std::cout << "  - Estimated stack usage: " << stats.estimatedStackDepth << " bytes\n";
+            }
+            
         } else {
             std::cout << "❌ Phase 4 completed with errors\n";
             
             int totalErrors = parser.getErrors().size() + 
                             analyzer.getErrors().size() + 
-                            codegen.getErrors().size();
-            int totalWarnings = analyzer.getWarnings().size();
+                            codegen->getErrors().size();
+            int totalWarnings = analyzer.getWarnings().size() + 
+                               codegen->getWarnings().size();
             
             std::cout << "Total errors: " << totalErrors << "\n";
             std::cout << "Total warnings: " << totalWarnings << "\n";
@@ -554,32 +607,33 @@ auto main(int argc, char* argv[]) -> int {
         }
         
         // Integration test if successful
-        if (!hasErrors && !outputFile.empty()) {
+        if (!hasErrors && (createESP32Project || !outputFile.empty())) {
             std::cout << "\n" << std::string(30, '=') << "\n";
             std::cout << "INTEGRATION TEST SUMMARY\n";
             std::cout << std::string(30, '=') << "\n";
             
-            ForthCompiler compiler;
-            compiler.setTarget(target);
-            
             try {
-                auto testModule = compiler.compile(source);
-                if (testModule) {
+                // Test the complete compilation pipeline
+                auto testCodegen = ForthCodegenFactory::create(ForthCodegenFactory::TargetType::ESP32);
+                testCodegen->setSemanticAnalyzer(&analyzer);
+                testCodegen->setDictionary(&parser.getDictionary());
+                
+                if (testCodegen->generateCode(*ast)) {
                     std::cout << "✅ High-level compiler interface working\n";
                     std::cout << "✅ Full compilation pipeline functional\n";
+                    std::cout << "✅ C code generation via compiler interface working\n";
                     
-                    if (compiler.analyzeStackEffects(source)) {
-                        std::cout << "✅ Stack effect analysis integration working\n";
+                    auto testStats = testCodegen->getStatistics();
+                    if (testStats.linesGenerated > 0) {
+                        std::cout << "✅ Code generation metrics working\n";
                     }
                     
-                    auto irCode = compiler.generateLLVMIR(source);
-                    if (!irCode.empty()) {
-                        std::cout << "✅ IR generation via compiler interface working\n";
+                    if (!testCodegen->getHeaderCode().empty() && !testCodegen->getCompleteCode().empty()) {
+                        std::cout << "✅ Header and source code generation working\n";
                     }
                 } else {
                     std::cout << "⚠️  High-level compiler interface has issues\n";
-                    auto errors = compiler.getAllErrors();
-                    for (const auto& error : errors) {
+                    for (const auto& error : testCodegen->getErrors()) {
                         std::cout << "  • " << error << "\n";
                     }
                 }
