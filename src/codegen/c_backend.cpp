@@ -1332,8 +1332,32 @@ void ForthCCodegen::generateInlineAssemblyBuiltin(const std::string& word) {
         decreaseIndent();
         emitIndented(");");
     } else {
-        // Fall back to regular function call
-        generateOptimizedBuiltin(word);
+        
+        static const std::unordered_map<std::string, std::string> builtinMap = {
+            {"+", "forth_add()"},
+            {"-", "forth_sub()"},
+            {"*", "forth_mul()"},
+            {"/", "forth_div()"},
+            {"MOD", "forth_mod()"},
+            {"NEGATE", "forth_negate()"},
+            {"ABS", "forth_abs()"},
+            {"=", "forth_equal()"},
+            {"<>", "forth_not_equal()"},
+            {"<", "forth_less_than()"},
+            {">", "forth_greater_than()"},
+            {"<=", "forth_less_equal()"},
+            {">=", "forth_greater_equal()"},
+            {"DUP", "forth_dup()"},
+            {"DROP", "forth_drop()"},
+            {"SWAP", "forth_swap()"},
+            {"OVER", "forth_over()"},
+            {"ROT", "forth_rot()"},
+            {"!", "forth_store()"},
+            {"@", "forth_fetch()"},
+            {"EMIT", "forth_emit()"},
+            {"TYPE", "forth_type()"},
+            {"CR", "forth_cr()"}
+        };        
     }
 }
 

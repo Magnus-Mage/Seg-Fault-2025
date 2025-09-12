@@ -151,31 +151,40 @@ void SemanticAnalyzer::visit(WordCallNode& node) {
     auto effect = calculateWordEffect(wordName);
     
     if (!effect.effect.isKnown) {
-        // For unknown words, use a conservative approach
         if (wordName == currentWordName) {
             // Recursive call - assume it maintains stack balance
             effect.effect = {1, 1, true};
         } else {
             addWarning("Unknown stack effect for word: " + wordName, node);
-            // Don't fail the analysis, just assume balanced effect
             effect.effect = {0, 0, false};
+            return; // Don't try to apply unknown effects
         }
     }
     
-    // Only report underflow if we're at program level (not in word definition)
-    // OR if we have a concrete stack requirement that can't be met
-    if (!inWordDefinition && currentStack.depth < effect.effect.consumed) {
-        addError("Stack underflow calling word: " + wordName, node);
-    } else if (inWordDefinition) {
-        // In word definition, just track the deepest we go
-        currentStack.pop(effect.effect.consumed);  // This may go negative, which is OK
-        currentStack.push(effect.effect.produced);
-    } else {
-        // Normal program-level execution
-        if (!popStack(effect.effect.consumed)) {
-            addError("Stack underflow calling word: " + wordName, node);
+    if (inWordDefinition) {
+        // In word definition, allow negative depth tracking
+        int oldDepth = currentStack.depth;
+        currentStack.depth -= effect.effect.consumed;
+        currentStack.depth += effect.effect.produced;
+        
+        // Track minimum depth reached (this can be negative)
+        currentStack.minDepth = std::min(currentStack.minDepth, currentStack.depth);
+        currentStack.maxDepth = std::max(currentStack.maxDepth, currentStack.depth);
+        
+        // Don't mark as invalid just because we went negative in word definition
+        if (oldDepth >= 0 && currentStack.depth < 0) {
+            // We crossed into negative - this is the actual consumption requirement
         }
-        pushStack(effect.effect.produced);
+    } else {
+        // Normal program-level execution - must not underflow
+        if (currentStack.depth < effect.effect.consumed) {
+            addError("Stack underflow calling word: " + wordName, node);
+            currentStack.isValid = false;
+            return;
+        }
+        currentStack.depth -= effect.effect.consumed;
+        currentStack.depth += effect.effect.produced;
+        currentStack.maxDepth = std::max(currentStack.maxDepth, currentStack.depth);
     }
 }
 
@@ -635,7 +644,9 @@ SemanticAnalysisManager::SemanticAnalysisManager()
 
 SemanticAnalysisManager::SemanticAnalysisManager(const SemanticAnalyzer::AnalysisOptions& opts) 
     : analyzer(std::make_unique<SemanticAnalyzer>()), options(opts) {
-    analyzer->setOptions(options);
+    if (analyzer) {
+	    analyzer->setOptions(options);
+    }
 }
 
 auto SemanticAnalysisManager::analyzeProgram(ProgramNode& program, const ForthDictionary& dictionary) -> SemanticReport {

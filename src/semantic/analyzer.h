@@ -28,7 +28,7 @@ struct StackState {
         depth -= count;
         minDepth = std::min(minDepth, depth);
         if (depth < 0) {
-            isValid = false;
+            
             return false;
         }
         return true;
@@ -37,6 +37,13 @@ struct StackState {
     auto reset() -> void {
         depth = minDepth = maxDepth = 0;
         isValid = true;
+    }
+
+    // Allow forced depth setting for word definition analysis
+    auto setDepth(int newDepth) -> void {
+        depth = newDepth;
+        minDepth = std::min(minDepth, depth);
+        maxDepth = std::max(maxDepth, depth);
     }
 };
 
