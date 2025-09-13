@@ -446,28 +446,8 @@ Include in bug reports:
 - System information (OS, compiler version)
 - CMake and build logs
 
-##  Roadmap
-
-### Phase 5: ESP32 Hardware Integration
-- [ ] Complete peripheral library
-- [ ] Interrupt handling
-- [ ] Real-time task scheduling
-- [ ] WiFi/Bluetooth integration
-
-### Phase 6: Optimization & Performance  
-- [ ] Advanced code optimization
-- [ ] Memory usage optimization
-- [ ] Compile-time evaluation
-- [ ] Profile-guided optimization
-
-### Phase 7: Advanced Features
-- [ ] Debugging support
-- [ ] Interactive development
-- [ ] Module system
-- [ ] Standard library expansion
-
 ---
 
-**Version:** 0.3.0  
+**Version:** 0.5.0  
 **Last Updated:** Phase 4 - Semantic Analysis & C Code Generation  
 **Next :** ESP32 Hardware Integration
