@@ -4,6 +4,7 @@
 #include <string>
 #include <algorithm>
 #include <cctype>
+#include <filesystem>  
 
 class ForthUtils {
 public:
@@ -25,6 +26,13 @@ public:
     static std::string toUpper(const std::string& str) {
         std::string result = str;
         std::transform(result.begin(), result.end(), result.begin(), ::toupper);
+        return result;
+    }
+    
+    static std::string toLower(const std::string& str) {
+        std::string result = str;
+        std::transform(result.begin(), result.end(), result.begin(), 
+            [](unsigned char c) { return std::tolower(c); });
         return result;
     }
     
@@ -59,6 +67,15 @@ public:
             }
         }
         return true;
+    }
+    
+    // Path utilities 
+    static bool createDirectories(const std::string& path) {
+        return std::filesystem::create_directories(path);
+    }
+    
+    static bool fileExists(const std::string& path) {
+        return std::filesystem::exists(path);
     }
 };
 
