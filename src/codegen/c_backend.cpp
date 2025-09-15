@@ -110,6 +110,7 @@ bool ForthCCodegen::generateCode(const ProgramNode& program) {
     }
 }
 
+
 void ForthCCodegen::collectWordDefinitions(const ProgramNode& program) {
     // First pass: collect all word names and map to function names
     for (const auto& child : program.getChildren()) {
@@ -249,7 +250,7 @@ void ForthCCodegen::analyzeProgram(const ProgramNode& program) {
     if (hasComparisons) {
         usedFeatures.insert("COMPARE");
     }
-    
+
     // Determine optimization strategy based on features
     determineOptimizationStrategy();
 }
@@ -284,12 +285,12 @@ void ForthCCodegen::determineOptimizationStrategy() {
 void ForthCCodegen::generateModularRuntime() {
     // Clear any existing files first
     generatedFiles.clear();
-    
+
     // Generate only the runtime components that are actually needed
     
     // 1. Core runtime header (always needed)
     generateFile("forth_runtime.h", generateCoreRuntimeHeader());
-    
+
     // 2. Stack operations (always needed)  
     generateFile("forth_stack.c", generateStackImplementation());
     
@@ -548,6 +549,7 @@ void forth_pwm_write(forth_cell_t channel, forth_cell_t duty);
     return header.str();
 }
 
+
 // Fixed stack implementation - Remove inline functions from header
 std::string ForthCCodegen::generateStackImplementation() {
     std::ostringstream impl;
@@ -558,7 +560,7 @@ std::string ForthCCodegen::generateStackImplementation() {
 #include <stdlib.h>
 
 // ============================================================================
-// Stack Implementation - FIXED: Proper global scope and non-inline functions
+// Stack Implementation - Proper global scope and non-inline functions
 // ============================================================================
 
 // Global stack instance - properly exposed (not static)
@@ -842,7 +844,6 @@ std::string ForthCCodegen::generateMathImplementation() {
 
 )";
     }
-
     return impl.str();
 }
 
@@ -976,7 +977,6 @@ static bool gpio_initialized = false;
 
 void forth_esp32_init(void) {
     if (!gpio_initialized) {
-        // Basic initialization
         gpio_initialized = true;
     }
 }
@@ -1109,6 +1109,7 @@ void ForthCCodegen::visit(ProgramNode& node) {
     emitLine("// Optimization level: " + getOptimizationLevel());
     emitLine("");
     
+
     emitLine("#include <stdio.h>");
     emitLine("#include \"forth_runtime.h\"");
     emitLine("");
@@ -1547,6 +1548,11 @@ void ForthCCodegen::applyESP32Optimizations() {
             iramFunctions.insert(word);
         }
     }
+    
+    // 2. Optimize GPIO operations for direct register access
+    // 3. Use DMA for large memory operations
+    // 4. Optimize interrupt handling
+
 }
 
 void ForthCCodegen::removeUnusedFunctions() {
@@ -1564,8 +1570,9 @@ void ForthCCodegen::removeUnusedFunctions() {
     }
 }
 
+
 // ============================================================================
-// Code Generation Finalization - FIXED
+// Code Generation Finalization
 // ============================================================================
 
 void ForthCCodegen::finalizeGeneration() {
@@ -1577,7 +1584,7 @@ void ForthCCodegen::finalizeGeneration() {
         generateESP32Main();
     }
     
-    // Add forward reference resolution - FIXED
+    // Add forward reference resolution 
     // resolveForwardReferences();
 }
 
@@ -1635,7 +1642,6 @@ void app_main(void) {
     
     generateFile("main.c", main.str());
 }
-
 
 
 // ============================================================================
@@ -1846,7 +1852,7 @@ bool ForthCCodegen::isBuiltinWord(const std::string& word) const {
 }
 
 // ============================================================================
-// Statistics and Error Handling - FIXED
+// Statistics and Error Handling
 // ============================================================================
 
 ForthCCodegen::CodeGenStats ForthCCodegen::getStatistics() const {
@@ -1889,7 +1895,7 @@ void ForthCCodegen::addError(const std::string& message, ASTNode* node) {
 }
 
 // ============================================================================
-// Public Interface Methods - FIXED
+// Public Interface Methods
 // ============================================================================
 
 std::string ForthCCodegen::getCompleteCode() const {
@@ -2002,7 +2008,6 @@ void app_main(void) {
 }
 )";
         mainFile.close();
-
         // Write forth_program.c - find the main program file
         std::ofstream progFile(fs::path(projectPath) / "main" / "forth_program.c");
         if (!progFile.is_open()) return false;
@@ -2088,7 +2093,7 @@ CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 }
 
 // ============================================================================
-// Factory Implementation - FIXED
+// Factory Implementation
 // ============================================================================
 
 namespace ForthCodegenFactory {

@@ -243,8 +243,8 @@ private:
     std::string sanitizeIdentifier(const std::string& name);
     std::string generateFunctionName(const std::string& wordName);
     std::string escapeCString(const std::string& str);
-    
     void debugGenerationState() const;
+  
     // ========================================================================
     // Optimization Methods
     // ========================================================================
