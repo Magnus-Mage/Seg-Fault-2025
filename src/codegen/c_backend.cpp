@@ -40,26 +40,88 @@ bool ForthCCodegen::generateCode(const ProgramNode& program) {
     resetGenerationState();
     
     try {
-        // Analyze program for optimization opportunities
+        // Validate input
+        if (program.getChildren().empty()) {
+            addWarning("Empty program provided");
+        }
+        
+        // PASS 1: Collect all word definitions first
+        collectWordDefinitions(program);
+        
+        // PASS 2: Analyze program for optimization opportunities  
         analyzeProgram(program);
         
-        // Generate modular runtime components
+        // PASS 3: Generate modular runtime components
         generateModularRuntime();
         
-        // Process AST and generate code
+        // Validate that program file was created
+        bool foundProgramFile = false;
+        for (const auto& [filename, _] : generatedFiles) {
+            if (filename == "forth_program.c") {
+                foundProgramFile = true;
+                break;
+            }
+        }
+        
+        if (!foundProgramFile) {
+            addError("Failed to create forth_program.c file");
+            return false;
+        }
+        
+        // PASS 4: Process AST and generate code
         const_cast<ProgramNode&>(program).accept(*this);
         
-        // Apply optimizations based on analysis
+        // PASS 5: Apply optimizations based on analysis
         applyOptimizations();
         
-        // Finalize code generation
+        // PASS 6: Finalize code generation
         finalizeGeneration();
+        
+        // Validate generation results
+        if (generatedFiles.empty()) {
+            addError("No files were generated");
+            return false;
+        }
+        
+        // Check that program file has content
+        for (const auto& [filename, content] : generatedFiles) {
+            if (filename == "forth_program.c") {
+                if (content.str().empty()) {
+                    addError("Generated program file is empty");
+                    return false;
+                }
+                // Check for main function
+                if (content.str().find("forth_program_main") == std::string::npos) {
+                    addError("Generated program missing main function");
+                    return false;
+                }
+                break;
+            }
+        }
         
         return !hasErrors();
         
     } catch (const std::exception& e) {
-        addError("Code generation failed: " + std::string(e.what()));
+        addError(std::string("Code generation failed with exception: ") + e.what());
         return false;
+    } catch (...) {
+        addError("Code generation failed with unknown exception");
+        return false;
+    }
+}
+
+
+void ForthCCodegen::collectWordDefinitions(const ProgramNode& program) {
+    // First pass: collect all word names and map to function names
+    for (const auto& child : program.getChildren()) {
+        if (child->getType() == ASTNode::NodeType::WORD_DEFINITION) {
+            auto* wordDef = static_cast<WordDefinitionNode*>(child.get());
+            const std::string& wordName = wordDef->getWordName();
+            const std::string funcName = generateFunctionName(wordName);
+            
+            wordFunctionNames[ForthUtils::toUpper(wordName)] = funcName;
+            generatedWords.insert(ForthUtils::toUpper(wordName));
+        }
     }
 }
 
@@ -108,7 +170,8 @@ void ForthCCodegen::analyzeProgram(const ProgramNode& program) {
                           word == "OVER" || word == "ROT") {
                     codegen->usedFeatures.insert("STACK");
                 } else if (word == "=" || word == "<>" || word == "<" || 
-                          word == ">" || word == "<=" || word == ">=") {
+                          word == ">" || word == "<=" || word == ">=" ||
+                          word == "0=" || word == "0<" || word == "0>") {
                     codegen->usedFeatures.insert("COMPARE");
                 } else if (word == "!" || word == "@") {
                     codegen->usedFeatures.insert("MEMORY");
@@ -123,6 +186,7 @@ void ForthCCodegen::analyzeProgram(const ProgramNode& program) {
             }
         }
         
+        // FIXED: Implement all required pure virtual methods
         void visit(NumberLiteralNode& node) override {
             if (node.isFloatingPoint()) {
                 codegen->usedFeatures.insert("FLOAT");
@@ -174,6 +238,19 @@ void ForthCCodegen::analyzeProgram(const ProgramNode& program) {
     analyzer.codegen = this;
     const_cast<ProgramNode&>(program).accept(analyzer);
     
+    // Force COMPARE feature if any comparison operators are used
+    bool hasComparisons = false;
+    for (const auto& builtin : usedBuiltins) {
+        if (builtin == "=" || builtin == "<>" || builtin == "<" || 
+            builtin == ">" || builtin == "<=" || builtin == ">=") {
+            hasComparisons = true;
+            break;
+        }
+    }
+    if (hasComparisons) {
+        usedFeatures.insert("COMPARE");
+    }
+
     // Determine optimization strategy based on features
     determineOptimizationStrategy();
 }
@@ -206,23 +283,24 @@ void ForthCCodegen::determineOptimizationStrategy() {
 // ============================================================================
 
 void ForthCCodegen::generateModularRuntime() {
+    // Clear any existing files first
+    generatedFiles.clear();
+
     // Generate only the runtime components that are actually needed
     
     // 1. Core runtime header (always needed)
     generateFile("forth_runtime.h", generateCoreRuntimeHeader());
-    
-    // 2. Stack operations (always needed)
+
+    // 2. Stack operations (always needed)  
     generateFile("forth_stack.c", generateStackImplementation());
     
     // 3. Math operations (conditional)
-    if (usedFeatures.contains("MATH")) {
+    if (usedFeatures.contains("MATH") || !usedBuiltins.empty()) {
         generateFile("forth_math.c", generateMathImplementation());
     }
     
-    // 4. Comparison operations (conditional)
-    if (usedFeatures.contains("COMPARE")) {
-        generateFile("forth_compare.c", generateCompareImplementation());
-    }
+    // 4. Comparison operations (FIXED: Generate if ANY comparison might be used)
+    generateFile("forth_compare.c", generateCompareImplementation());
     
     // 5. Memory operations (conditional)
     if (usedFeatures.contains("MEMORY")) {
@@ -239,14 +317,21 @@ void ForthCCodegen::generateModularRuntime() {
         generateFile("forth_esp32.c", generateESP32Implementation());
     }
     
-    // 8. Main program file
-    currentFileIndex = generatedFiles.size();
-    generatedFiles.push_back({"forth_program.c", std::ostringstream()});
+    // 8. CRITICAL FIX: Create the main program file and set current index
+    generatedFiles.emplace_back("forth_program.c", std::ostringstream());
+    currentFileIndex = generatedFiles.size() - 1;  // Set to the program file
+    
+    // Add program file header
+    emitLine("// Generated FORTH Program");
+    emitLine("#include \"forth_runtime.h\"");
+    emitLine("#include <stdio.h>");
+    emitLine("");
 }
 
 // ============================================================================
-// Optimized Runtime Component Generators
+// Fixed Runtime Component Generators
 // ============================================================================
+
 
 std::string ForthCCodegen::generateCoreRuntimeHeader() const {
     std::ostringstream header;
@@ -261,6 +346,7 @@ extern "C" {
 #include <stdint.h>
 #include <stdbool.h>
 #include <stddef.h>
+#include <stdio.h>  // FIXED: Add stdio.h for printf/fflush
 
 // ============================================================================
 // Configuration Macros
@@ -277,17 +363,31 @@ extern "C" {
 #ifdef ESP32_PLATFORM
     #include "esp_attr.h"
     #include "esp_log.h"
+    #include "freertos/FreeRTOS.h"
+    #include "freertos/portmacro.h"
     
     // Performance-critical functions in IRAM
     #define FORTH_IRAM_ATTR IRAM_ATTR
-    #define FORTH_INLINE_ATTR __attribute__((always_inline)) inline
     
     // DMA-safe memory alignment
     #define FORTH_DMA_ATTR WORD_ALIGNED_ATTR
+    
+    // FIXED: Don't redefine ESP32 macros - they're already defined
+    // Use the existing FreeRTOS definitions
 #else
     #define FORTH_IRAM_ATTR
-    #define FORTH_INLINE_ATTR inline
     #define FORTH_DMA_ATTR
+        
+    #ifndef portENTER_CRITICAL
+    #define portENTER_CRITICAL(x)
+    #endif
+    #ifndef portEXIT_CRITICAL
+    #define portEXIT_CRITICAL(x)
+    #endif  
+    #define portMUX_TYPE int
+    #ifndef portMUX_INITIALIZER_UNLOCKED
+        #define portMUX_INITIALIZER_UNLOCKED 0
+    #endif
 #endif
 
 // ============================================================================
@@ -305,7 +405,7 @@ typedef uint8_t forth_byte_t;    // Byte operations
 
 // Stack structure for better cache locality
 typedef struct {
-    forth_cell_t* data;
+    forth_cell_t data[FORTH_STACK_SIZE];
     size_t ptr;
     size_t size;
     #ifdef ESP32_PLATFORM
@@ -314,63 +414,67 @@ typedef struct {
 } forth_stack_t;
 
 // ============================================================================
-// Core Stack Operations (Always Inline for Performance)
+// Global Variables
 // ============================================================================
 
-extern forth_stack_t* forth_data_stack;
+extern forth_stack_t forth_data_stack;
+
+// ============================================================================
+// Core Stack Operations
+// ============================================================================
 
 // Initialize/cleanup
 void forth_init(void);
 void forth_cleanup(void);
 
 // Basic stack operations with bounds checking
-FORTH_INLINE_ATTR void forth_push(forth_cell_t value);
-FORTH_INLINE_ATTR forth_cell_t forth_pop(void);
-FORTH_INLINE_ATTR forth_cell_t forth_peek(void);
-FORTH_INLINE_ATTR bool forth_stack_empty(void);
-FORTH_INLINE_ATTR size_t forth_stack_depth(void);
+void forth_push(forth_cell_t value);
+forth_cell_t forth_pop(void);
+forth_cell_t forth_peek(void);
+bool forth_stack_empty(void);
+size_t forth_stack_depth(void);
 
 )";
 
     // Conditionally add function declarations based on used features
     if (usedFeatures.contains("STACK")) {
         header << R"(// Stack manipulation
-FORTH_IRAM_ATTR void forth_dup(void);
-FORTH_IRAM_ATTR void forth_drop(void);
-FORTH_IRAM_ATTR void forth_swap(void);
-FORTH_IRAM_ATTR void forth_over(void);
-FORTH_IRAM_ATTR void forth_rot(void);
-FORTH_IRAM_ATTR void forth_nip(void);
-FORTH_IRAM_ATTR void forth_tuck(void);
+void forth_dup(void);
+void forth_drop(void);
+void forth_swap(void);
+void forth_over(void);
+void forth_rot(void);
+void forth_nip(void);
+void forth_tuck(void);
 
 )";
     }
 
     if (usedFeatures.contains("MATH")) {
         header << R"(// Math operations
-FORTH_IRAM_ATTR void forth_add(void);
-FORTH_IRAM_ATTR void forth_sub(void);
-FORTH_IRAM_ATTR void forth_mul(void);
-FORTH_IRAM_ATTR void forth_div(void);
-FORTH_IRAM_ATTR void forth_mod(void);
-FORTH_IRAM_ATTR void forth_abs(void);
-FORTH_IRAM_ATTR void forth_negate(void);
-FORTH_IRAM_ATTR void forth_min(void);
-FORTH_IRAM_ATTR void forth_max(void);
+void forth_add(void);
+void forth_sub(void);
+void forth_mul(void);
+void forth_div(void);
+void forth_mod(void);
+void forth_abs(void);
+void forth_negate(void);
+void forth_min(void);
+void forth_max(void);
 
 )";
     }
 
     if (usedFeatures.contains("COMPARE")) {
-        header << R"(// Comparison operations
-FORTH_IRAM_ATTR void forth_equal(void);
-FORTH_IRAM_ATTR void forth_not_equal(void);
-FORTH_IRAM_ATTR void forth_less_than(void);
-FORTH_IRAM_ATTR void forth_greater_than(void);
-FORTH_IRAM_ATTR void forth_less_equal(void);
-FORTH_IRAM_ATTR void forth_greater_equal(void);
-FORTH_IRAM_ATTR void forth_zero_equal(void);
-FORTH_IRAM_ATTR void forth_zero_less(void);
+        header << R"(// Comparison operations - FIXED: Add all used comparisons
+void forth_equal(void);
+void forth_not_equal(void);
+void forth_less_than(void);
+void forth_greater_than(void);
+void forth_less_equal(void);
+void forth_greater_equal(void);
+void forth_zero_equal(void);
+void forth_zero_less(void);
 
 )";
     }
@@ -392,6 +496,7 @@ void forth_type(void);
 void forth_cr(void);
 void forth_space(void);
 void forth_spaces(void);
+void forth_print_number(forth_cell_t value);
 
 )";
     }
@@ -401,11 +506,14 @@ void forth_spaces(void);
         header << R"(// ESP32-specific operations
 #ifdef ESP32_PLATFORM
 
+// ESP32 initialization
+void forth_esp32_init(void);
+
 // GPIO operations
 void forth_gpio_init(forth_cell_t pin, forth_cell_t mode);
 void forth_gpio_write(forth_cell_t pin, forth_cell_t value);
 forth_cell_t forth_gpio_read(forth_cell_t pin);
-FORTH_IRAM_ATTR void forth_gpio_toggle(forth_cell_t pin);
+void forth_gpio_toggle(forth_cell_t pin);
 
 // Timing
 void forth_delay_ms(forth_cell_t ms);
@@ -428,10 +536,8 @@ void forth_pwm_write(forth_cell_t channel, forth_cell_t duty);
 
     header << R"(
 // ============================================================================
-// User-defined words
+// User-defined words - Forward declarations will be added here
 // ============================================================================
-
-// Forward declarations for user-defined words will be added here
 
 #ifdef __cplusplus
 }
@@ -443,6 +549,8 @@ void forth_pwm_write(forth_cell_t channel, forth_cell_t duty);
     return header.str();
 }
 
+
+// Fixed stack implementation - Remove inline functions from header
 std::string ForthCCodegen::generateStackImplementation() {
     std::ostringstream impl;
     
@@ -452,32 +560,27 @@ std::string ForthCCodegen::generateStackImplementation() {
 #include <stdlib.h>
 
 // ============================================================================
-// Stack Implementation with ESP32 Optimizations
+// Stack Implementation - Proper global scope and non-inline functions
 // ============================================================================
 
-// Global stack instance
-static struct {
-    forth_cell_t data[FORTH_STACK_SIZE];
-    size_t ptr;
-    #ifdef ESP32_PLATFORM
-    portMUX_TYPE lock;
-    #endif
-} stack = {
+// Global stack instance - properly exposed (not static)
+forth_stack_t forth_data_stack = {
+    .data = {0},
     .ptr = 0,
+    .size = FORTH_STACK_SIZE,
     #ifdef ESP32_PLATFORM
     .lock = portMUX_INITIALIZER_UNLOCKED,
     #endif
 };
 
-forth_stack_t* forth_data_stack = (forth_stack_t*)&stack;
-
 // ============================================================================
-// Core Operations (Optimized for ESP32)
+// Core Operations - All non-inline for proper linking
 // ============================================================================
 
 void forth_init(void) {
-    stack.ptr = 0;
-    memset(stack.data, 0, sizeof(stack.data));
+    forth_data_stack.ptr = 0;
+    forth_data_stack.size = FORTH_STACK_SIZE;
+    memset(forth_data_stack.data, 0, sizeof(forth_data_stack.data));
     
     #ifdef ESP32_PLATFORM
     // Initialize ESP32-specific features
@@ -490,74 +593,74 @@ void forth_cleanup(void) {
     // Cleanup if needed
 }
 
-// Inline stack operations for maximum performance
-FORTH_INLINE_ATTR void forth_push(forth_cell_t value) {
-    #ifdef ESP32_PLATFORM
-    portENTER_CRITICAL(&stack.lock);
+// All functions are now non-inline to prevent linker issues
+void forth_push(forth_cell_t value) {
+    #ifndef ESP32_PLATFORM
+    portENTER_CRITICAL(&forth_data_stack.lock);
     #endif
     
-    if (stack.ptr >= FORTH_STACK_SIZE) {
+    if (forth_data_stack.ptr >= FORTH_STACK_SIZE) {
         #ifdef ESP32_PLATFORM
         ESP_LOGE("FORTH", "Stack overflow!");
-        portEXIT_CRITICAL(&stack.lock);
+        portEXIT_CRITICAL(&forth_data_stack.lock);
         #else
         fprintf(stderr, "FORTH: Stack overflow!\n");
         #endif
         return;
     }
     
-    stack.data[stack.ptr++] = value;
+    forth_data_stack.data[forth_data_stack.ptr++] = value;
     
     #ifdef ESP32_PLATFORM
-    portEXIT_CRITICAL(&stack.lock);
+    portEXIT_CRITICAL(&forth_data_stack.lock);
     #endif
 }
 
-FORTH_INLINE_ATTR forth_cell_t forth_pop(void) {
-    #ifdef ESP32_PLATFORM
-    portENTER_CRITICAL(&stack.lock);
+forth_cell_t forth_pop(void) {
+    #ifndef ESP32_PLATFORM
+    portENTER_CRITICAL(&forth_data_stack.lock);
     #endif
     
-    if (stack.ptr == 0) {
+    if (forth_data_stack.ptr == 0) {
         #ifdef ESP32_PLATFORM
         ESP_LOGE("FORTH", "Stack underflow!");
-        portEXIT_CRITICAL(&stack.lock);
+        portEXIT_CRITICAL(&forth_data_stack.lock);
         #else
         fprintf(stderr, "FORTH: Stack underflow!\n");
         #endif
         return 0;
     }
     
-    forth_cell_t value = stack.data[--stack.ptr];
+    forth_cell_t value = forth_data_stack.data[--forth_data_stack.ptr];
     
     #ifdef ESP32_PLATFORM
-    portEXIT_CRITICAL(&stack.lock);
+    portEXIT_CRITICAL(&forth_data_stack.lock);
     #endif
     
     return value;
 }
 
-FORTH_INLINE_ATTR forth_cell_t forth_peek(void) {
-    if (stack.ptr == 0) return 0;
-    return stack.data[stack.ptr - 1];
+forth_cell_t forth_peek(void) {
+    if (forth_data_stack.ptr == 0) return 0;
+    return forth_data_stack.data[forth_data_stack.ptr - 1];
 }
 
-FORTH_INLINE_ATTR bool forth_stack_empty(void) {
-    return stack.ptr == 0;
+bool forth_stack_empty(void) {
+    return forth_data_stack.ptr == 0;
 }
 
-FORTH_INLINE_ATTR size_t forth_stack_depth(void) {
-    return stack.ptr;
+size_t forth_stack_depth(void) {
+    return forth_data_stack.ptr;
 }
 
 )";
 
-    // Only generate used stack manipulation functions
+    // Generate used stack manipulation functions
     if (usedBuiltins.contains("DUP")) {
         impl << R"(
-FORTH_IRAM_ATTR void forth_dup(void) {
-    if (stack.ptr == 0) return;
-    forth_cell_t value = stack.data[stack.ptr - 1];
+void forth_dup(void) {
+    if (forth_data_stack.ptr == 0) return;
+    forth_cell_t value = forth_data_stack.data[forth_data_stack.ptr - 1];
     forth_push(value);
 }
 )";
@@ -565,43 +668,106 @@ FORTH_IRAM_ATTR void forth_dup(void) {
 
     if (usedBuiltins.contains("DROP")) {
         impl << R"(
-FORTH_IRAM_ATTR void forth_drop(void) {
-    if (stack.ptr > 0) stack.ptr--;
+void forth_drop(void) {
+    if (forth_data_stack.ptr > 0) forth_data_stack.ptr--;
 }
 )";
     }
 
     if (usedBuiltins.contains("SWAP")) {
         impl << R"(
-FORTH_IRAM_ATTR void forth_swap(void) {
-    if (stack.ptr < 2) return;
-    forth_cell_t temp = stack.data[stack.ptr - 1];
-    stack.data[stack.ptr - 1] = stack.data[stack.ptr - 2];
-    stack.data[stack.ptr - 2] = temp;
+void forth_swap(void) {
+    if (forth_data_stack.ptr < 2) return;
+    forth_cell_t temp = forth_data_stack.data[forth_data_stack.ptr - 1];
+    forth_data_stack.data[forth_data_stack.ptr - 1] = forth_data_stack.data[forth_data_stack.ptr - 2];
+    forth_data_stack.data[forth_data_stack.ptr - 2] = temp;
 }
 )";
     }
 
     if (usedBuiltins.contains("OVER")) {
         impl << R"(
-FORTH_IRAM_ATTR void forth_over(void) {
-    if (stack.ptr < 2) return;
-    forth_push(stack.data[stack.ptr - 2]);
+void forth_over(void) {
+    if (forth_data_stack.ptr < 2) return;
+    forth_push(forth_data_stack.data[forth_data_stack.ptr - 2]);
 }
 )";
     }
 
     if (usedBuiltins.contains("ROT")) {
         impl << R"(
-FORTH_IRAM_ATTR void forth_rot(void) {
-    if (stack.ptr < 3) return;
-    forth_cell_t temp = stack.data[stack.ptr - 3];
-    stack.data[stack.ptr - 3] = stack.data[stack.ptr - 2];
-    stack.data[stack.ptr - 2] = stack.data[stack.ptr - 1];
-    stack.data[stack.ptr - 1] = temp;
+void forth_rot(void) {
+    if (forth_data_stack.ptr < 3) return;
+    forth_cell_t temp = forth_data_stack.data[forth_data_stack.ptr - 3];
+    forth_data_stack.data[forth_data_stack.ptr - 3] = forth_data_stack.data[forth_data_stack.ptr - 2];
+    forth_data_stack.data[forth_data_stack.ptr - 2] = forth_data_stack.data[forth_data_stack.ptr - 1];
+    forth_data_stack.data[forth_data_stack.ptr - 1] = temp;
 }
 )";
     }
+
+    return impl.str();
+}
+
+std::string ForthCCodegen::generateCompareImplementation() {
+    std::ostringstream impl;
+    
+    impl << R"(#include "forth_runtime.h"
+
+// ============================================================================
+// Comparison Operations (Optimized for Branch Prediction)
+// ============================================================================
+
+)";
+
+    // Generate ALL comparison operations that might be used
+    impl << R"(void forth_equal(void) {
+    forth_cell_t b = forth_pop();
+    forth_cell_t a = forth_pop();
+    forth_push(a == b ? -1 : 0);
+}
+
+void forth_not_equal(void) {
+    forth_cell_t b = forth_pop();
+    forth_cell_t a = forth_pop();
+    forth_push(a != b ? -1 : 0);
+}
+
+void forth_less_than(void) {
+    forth_cell_t b = forth_pop();
+    forth_cell_t a = forth_pop();
+    forth_push(a < b ? -1 : 0);
+}
+
+void forth_greater_than(void) {
+    forth_cell_t b = forth_pop();
+    forth_cell_t a = forth_pop();
+    forth_push(a > b ? -1 : 0);
+}
+
+void forth_less_equal(void) {
+    forth_cell_t b = forth_pop();
+    forth_cell_t a = forth_pop();
+    forth_push(a <= b ? -1 : 0);
+}
+
+void forth_greater_equal(void) {
+    forth_cell_t b = forth_pop();
+    forth_cell_t a = forth_pop();
+    forth_push(a >= b ? -1 : 0);
+}
+
+void forth_zero_equal(void) {
+    forth_cell_t a = forth_pop();
+    forth_push(a == 0 ? -1 : 0);
+}
+
+void forth_zero_less(void) {
+    forth_cell_t a = forth_pop();
+    forth_push(a < 0 ? -1 : 0);
+}
+
+)";
 
     return impl.str();
 }
@@ -678,62 +844,65 @@ std::string ForthCCodegen::generateMathImplementation() {
 
 )";
     }
-
-    if (usedBuiltins.contains("ABS")) {
-        impl << R"(FORTH_IRAM_ATTR void forth_abs(void) {
-    forth_cell_t a = forth_pop();
-    forth_push(a < 0 ? -a : a);
-}
-
-)";
-    }
-
-    if (usedBuiltins.contains("NEGATE")) {
-        impl << R"(FORTH_IRAM_ATTR void forth_negate(void) {
-    forth_cell_t a = forth_pop();
-    forth_push(-a);
-}
-
-)";
-    }
-
     return impl.str();
 }
 
-std::string ForthCCodegen::generateCompareImplementation() {
+std::string ForthCCodegen::generateIOImplementation() {
     std::ostringstream impl;
     
     impl << R"(#include "forth_runtime.h"
+#include <stdio.h>
 
 // ============================================================================
-// Comparison Operations (Optimized for Branch Prediction)
+// I/O Operations
 // ============================================================================
 
-)";
+void forth_emit(void) {
+    forth_cell_t c = forth_pop();
+    putchar((int)c);
+    #ifdef ESP32_PLATFORM
+    fflush(stdout);
+    #endif
+}
 
-    struct CompareOp {
-    std::string func;
-    std::string expr;
-};
-std::unordered_map<std::string, CompareOp> compareOps = {
-    {"=", {"forth_equal", "a == b"}},
-    {"<>", {"forth_not_equal", "a != b"}},
-    {"<", {"forth_less_than", "a < b"}},
-    {">", {"forth_greater_than", "a > b"}},
-    {"<=", {"forth_less_equal", "a <= b"}},
-    {">=", {"forth_greater_equal", "a >= b"}}
-};
+void forth_type(void) {
+    forth_cell_t len = forth_pop();
+    forth_cell_t addr = forth_pop();
+    const char* str = (const char*)addr;
+    for (int i = 0; i < len; i++) {
+        putchar(str[i]);
+    }
+    #ifdef ESP32_PLATFORM
+    fflush(stdout);
+    #endif
+}
 
-// And update the loop:
-for (const auto& [op, info] : compareOps) {
-    if (usedBuiltins.contains(op)) {
-        impl << "FORTH_IRAM_ATTR void " << info.func << "(void) {\n";
-        impl << "    forth_cell_t b = forth_pop();\n";
-        impl << "    forth_cell_t a = forth_pop();\n";
-        impl << "    forth_push(" << info.expr << " ? -1 : 0);\n";
-        impl << "}\n\n";
+void forth_cr(void) {
+    putchar('\n');
+    #ifdef ESP32_PLATFORM
+    fflush(stdout);
+    #endif
+}
+
+void forth_space(void) {
+    putchar(' ');
+}
+
+void forth_spaces(void) {
+    forth_cell_t n = forth_pop();
+    for (int i = 0; i < n; i++) {
+        putchar(' ');
     }
 }
+
+// Helper function to print numbers
+void forth_print_number(forth_cell_t value) {
+    printf("%d", (int)value);
+    #ifdef ESP32_PLATFORM
+    fflush(stdout);
+    #endif
+}
+)";
 
     return impl.str();
 }
@@ -786,59 +955,6 @@ void forth_byte_store(void) {
     return impl.str();
 }
 
-std::string ForthCCodegen::generateIOImplementation() {
-    std::ostringstream impl;
-    
-    impl << R"(#include "forth_runtime.h"
-#include <stdio.h>
-
-// ============================================================================
-// I/O Operations
-// ============================================================================
-
-void forth_emit(void) {
-    forth_cell_t c = forth_pop();
-    putchar((int)c);
-    #ifdef ESP32_PLATFORM
-    // Force flush for ESP32 serial output
-    fflush(stdout);
-    #endif
-}
-
-void forth_type(void) {
-    forth_cell_t len = forth_pop();
-    forth_cell_t addr = forth_pop();
-    const char* str = (const char*)addr;
-    for (int i = 0; i < len; i++) {
-        putchar(str[i]);
-    }
-    #ifdef ESP32_PLATFORM
-    fflush(stdout);
-    #endif
-}
-
-void forth_cr(void) {
-    putchar('\n');
-    #ifdef ESP32_PLATFORM
-    fflush(stdout);
-    #endif
-}
-
-void forth_space(void) {
-    putchar(' ');
-}
-
-void forth_spaces(void) {
-    forth_cell_t n = forth_pop();
-    for (int i = 0; i < n; i++) {
-        putchar(' ');
-    }
-}
-)";
-
-    return impl.str();
-}
-
 std::string ForthCCodegen::generateESP32Implementation() {
     std::ostringstream impl;
     
@@ -861,19 +977,6 @@ static bool gpio_initialized = false;
 
 void forth_esp32_init(void) {
     if (!gpio_initialized) {
-        // Initialize ADC
-        adc1_config_width(ADC_WIDTH_BIT_12);
-        
-        // Initialize LEDC for PWM
-        ledc_timer_config_t ledc_timer = {
-            .speed_mode = LEDC_HIGH_SPEED_MODE,
-            .timer_num = LEDC_TIMER_0,
-            .duty_resolution = LEDC_TIMER_13_BIT,
-            .freq_hz = 5000,
-            .clk_cfg = LEDC_AUTO_CLK
-        };
-        ledc_timer_config(&ledc_timer);
-        
         gpio_initialized = true;
     }
 }
@@ -917,8 +1020,9 @@ uint32_t forth_millis(void) {
 
 uint32_t forth_micros(void) {
     return (uint32_t)esp_timer_get_time();
-}
+} 
 
+// ESP32_PLATFORM
 // ADC Functions
 forth_cell_t forth_adc_read(forth_cell_t channel) {
     if (channel < 0 || channel > 7) return 0;
@@ -980,18 +1084,38 @@ void forth_pwm_write(forth_cell_t channel, forth_cell_t duty) {
 // ============================================================================
 
 void ForthCCodegen::visit(ProgramNode& node) {
-    // Switch to main program file
-    currentFileIndex = generatedFiles.size() - 1;
+    // Ensure we're writing to the correct file
+    if (generatedFiles.empty() || currentFileIndex >= generatedFiles.size()) {
+        addError("No program file available for writing");
+        return;
+    }
     
+    // Switch to main program file (should be the last one created)
+    for (size_t i = 0; i < generatedFiles.size(); i++) {
+        if (generatedFiles[i].first == "forth_program.c") {
+            currentFileIndex = i;
+            break;
+        }
+    }
+    
+    if (currentFileIndex >= generatedFiles.size()) {
+        addError("Could not find forth_program.c file");
+        return;
+    }
+    
+    // Generate program header
     emitLine("// Generated FORTH program: " + moduleName);
     emitLine("// Target: " + targetPlatform);
     emitLine("// Optimization level: " + getOptimizationLevel());
     emitLine("");
     
+
+    emitLine("#include <stdio.h>");
     emitLine("#include \"forth_runtime.h\"");
     emitLine("");
     
     // Forward declare all user-defined words first
+    emitLine("// Forward declarations of user-defined words");
     for (const auto& child : node.getChildren()) {
         if (child->getType() == ASTNode::NodeType::WORD_DEFINITION) {
             auto* wordDef = static_cast<WordDefinitionNode*>(child.get());
@@ -1001,14 +1125,21 @@ void ForthCCodegen::visit(ProgramNode& node) {
     }
     emitLine("");
     
-    // Generate word implementations
+    // Generate all word definitions
+    emitLine("// User-defined word implementations");
     for (const auto& child : node.getChildren()) {
         if (child->getType() == ASTNode::NodeType::WORD_DEFINITION) {
-            child->accept(*this);
+            try {
+                child->accept(*this);
+            } catch (const std::exception& e) {
+                addError(std::string("Error generating word definition: ") + e.what());
+                // Continue with other definitions
+            }
         }
     }
     
     // Generate main entry point
+    emitLine("");
     emitLine("// Main program entry point");
     emitLine("void forth_program_main(void) {");
     increaseIndent();
@@ -1016,10 +1147,36 @@ void ForthCCodegen::visit(ProgramNode& node) {
     emitIndented("forth_init();");
     emitLine("");
     
-    // Generate top-level code (non-word definitions)
+    // Process variable declarations
+    emitIndented("// Variable declarations");
     for (const auto& child : node.getChildren()) {
-        if (child->getType() != ASTNode::NodeType::WORD_DEFINITION) {
-            child->accept(*this);
+        if (child->getType() == ASTNode::NodeType::VARIABLE_DECLARATION) {
+            try {
+                child->accept(*this);
+            } catch (const std::exception& e) {
+                addError(std::string("Error generating variable declaration: ") + e.what());
+            }
+        }
+    }
+    
+    // Call MAIN word if it exists
+    if (wordFunctionNames.contains("MAIN")) {
+        emitLine("");
+        emitIndented("// Call main program word");
+        emitIndented(wordFunctionNames["MAIN"] + "();");
+    } else {
+        // If no MAIN word, process any top-level executable code
+        emitLine("");
+        emitIndented("// Execute top-level code");
+        for (const auto& child : node.getChildren()) {
+            if (child->getType() != ASTNode::NodeType::WORD_DEFINITION &&
+                child->getType() != ASTNode::NodeType::VARIABLE_DECLARATION) {
+                try {
+                    child->accept(*this);
+                } catch (const std::exception& e) {
+                    addError(std::string("Error generating top-level code: ") + e.what());
+                }
+            }
         }
     }
     
@@ -1027,19 +1184,29 @@ void ForthCCodegen::visit(ProgramNode& node) {
     emitIndented("forth_cleanup();");
     decreaseIndent();
     emitLine("}");
+    
+    // Ensure we completed successfully
+    emitLine("");
+    emitLine("// End of generated program");
 }
 
 void ForthCCodegen::visit(WordDefinitionNode& node) {
     const std::string& wordName = node.getWordName();
     const std::string funcName = generateFunctionName(wordName);
     
-    if (generatedWords.contains(wordName)) {
-        addWarning("Word '" + wordName + "' redefined");
+    // Validate word name
+    if (wordName.empty()) {
+        addError("Empty word name in word definition");
         return;
     }
     
-    generatedWords.insert(wordName);
-    wordFunctionNames[wordName] = funcName;
+    // Check for redefinition
+    if (generatedWords.contains(ForthUtils::toUpper(wordName))) {
+        addWarning("Word '" + wordName + "' redefined");
+    }
+    
+    generatedWords.insert(ForthUtils::toUpper(wordName));
+    wordFunctionNames[ForthUtils::toUpper(wordName)] = funcName;
     
     // Check if this word should be in IRAM
     bool useIRAM = optimizationFlags.useIRAM && isPerformanceCritical(wordName);
@@ -1052,9 +1219,19 @@ void ForthCCodegen::visit(WordDefinitionNode& node) {
     emitLine("void " + funcName + "(void) {");
     increaseIndent();
     
-    // Generate function body
+    // Generate function body - with error handling for each child
+    bool hasBody = false;
     for (const auto& child : node.getChildren()) {
-        child->accept(*this);
+        try {
+            child->accept(*this);
+            hasBody = true;
+        } catch (const std::exception& e) {
+            addError("Error in word '" + wordName + "': " + std::string(e.what()));
+        }
+    }
+    
+    if (!hasBody) {
+        emitIndented("// Empty word body");
     }
     
     decreaseIndent();
@@ -1065,16 +1242,36 @@ void ForthCCodegen::visit(WordCallNode& node) {
     const std::string& wordName = node.getWordName();
     const std::string upperWord = ForthUtils::toUpper(wordName);
     
+    // Special handling for print word "."
+    if (upperWord == ".") {
+        emitIndented("forth_print_number(forth_pop());");
+        return;
+    }
+    
     if (isBuiltinWord(upperWord)) {
         generateOptimizedBuiltin(upperWord);
     } else if (wordFunctionNames.contains(upperWord)) {
+        // Direct call to generated function
         emitIndented(wordFunctionNames[upperWord] + "();");
     } else if (dictionary && dictionary->isWordDefined(upperWord)) {
-        // Forward reference - generate call through function pointer table
-        emitIndented("forth_call_word_" + sanitizeIdentifier(upperWord) + "();");
+        // Forward reference - need to defer resolution
+        std::string callFunc = "forth_call_word_" + sanitizeIdentifier(upperWord);
+        emitIndented(callFunc + "();");
         forwardReferences.insert(upperWord);
     } else {
-        addError("Unknown word: " + wordName, &node);
+        // Try to find in current generation context
+        bool found = false;
+        for (const auto& [name, func] : wordFunctionNames) {
+            if (ForthUtils::toUpper(name) == upperWord) {
+                emitIndented(func + "();");
+                found = true;
+                break;
+            }
+        }
+        
+        if (!found) {
+            addError("Unknown word: " + wordName, &node);
+        }
     }
 }
 
@@ -1085,10 +1282,14 @@ void ForthCCodegen::visit(NumberLiteralNode& node) {
         emitIndented("forth_push((forth_cell_t)(forth_float_t)" + value + "f);");
     } else {
         // Use immediate push for small constants (optimization)
-        int intVal = std::stoi(value);
-        if (intVal >= -128 && intVal <= 127) {
-            emitIndented("forth_push(" + value + ");  // Small constant");
-        } else {
+        try {
+            int intVal = std::stoi(value);
+            if (intVal >= -128 && intVal <= 127) {
+                emitIndented("forth_push(" + value + ");  // Small constant");
+            } else {
+                emitIndented("forth_push(" + value + ");");
+            }
+        } catch (const std::exception&) {
             emitIndented("forth_push(" + value + ");");
         }
     }
@@ -1211,13 +1412,7 @@ void ForthCCodegen::visit(VariableDeclarationNode& node) {
 // ============================================================================
 
 void ForthCCodegen::generateOptimizedBuiltin(const std::string& word) {
-    // Check if we can use inline assembly for ESP32
-    if (targetPlatform.starts_with("esp32") && useInlineAssembly(word)) {
-        generateInlineAssemblyBuiltin(word);
-        return;
-    }
-    
-    // Map to optimized function calls
+    // Map to optimized function calls - FIXED to handle all comparison operators
     static const std::unordered_map<std::string, std::string> builtinMap = {
         {"+", "forth_add()"},
         {"-", "forth_sub()"},
@@ -1310,61 +1505,6 @@ void ForthCCodegen::generateOptimizedCountedLoop(const BeginUntilLoopNode& node)
     // Implementation would depend on pattern recognition
 }
 
-bool ForthCCodegen::useInlineAssembly(const std::string& word) const {
-    // Only use inline assembly for critical operations on ESP32
-    if (!targetPlatform.starts_with("esp32")) return false;
-    
-    static const std::set<std::string> asmOps = {"+", "-", "DUP", "DROP", "SWAP"};
-    return optimizationFlags.useIRAM && asmOps.contains(word);
-}
-
-void ForthCCodegen::generateInlineAssemblyBuiltin(const std::string& word) {
-    // ESP32 Xtensa inline assembly for critical operations
-    if (word == "DUP" && targetPlatform == "esp32") {
-        emitIndented("// Inline assembly DUP for ESP32");
-        emitIndented("__asm__ __volatile__(");
-        increaseIndent();
-        emitIndented("\"l32i a2, %0, 0\\n\"");
-        emitIndented("\"s32i a2, %0, 4\\n\"");
-        emitIndented("\"addi %0, %0, 4\\n\"");
-        emitIndented(": \"+r\" (forth_data_stack->ptr)");
-        emitIndented(": : \"a2\", \"memory\"");
-        decreaseIndent();
-        emitIndented(");");
-    } else {
-        
-        static const std::unordered_map<std::string, std::string> builtinMap = {
-            {"+", "forth_add()"},
-            {"-", "forth_sub()"},
-            {"*", "forth_mul()"},
-            {"/", "forth_div()"},
-            {"MOD", "forth_mod()"},
-            {"NEGATE", "forth_negate()"},
-            {"ABS", "forth_abs()"},
-            {"=", "forth_equal()"},
-            {"<>", "forth_not_equal()"},
-            {"<", "forth_less_than()"},
-            {">", "forth_greater_than()"},
-            {"<=", "forth_less_equal()"},
-            {">=", "forth_greater_equal()"},
-            {"DUP", "forth_dup()"},
-            {"DROP", "forth_drop()"},
-            {"SWAP", "forth_swap()"},
-            {"OVER", "forth_over()"},
-            {"ROT", "forth_rot()"},
-            {"!", "forth_store()"},
-            {"@", "forth_fetch()"},
-            {"EMIT", "forth_emit()"},
-            {"TYPE", "forth_type()"},
-            {"CR", "forth_cr()"}
-        };        
-    }
-}
-
-// ============================================================================
-// Code Generation Finalization
-// ============================================================================
-
 void ForthCCodegen::applyOptimizations() {
     // Apply various optimization passes
     
@@ -1397,7 +1537,6 @@ void ForthCCodegen::inlineSmallFunctions() {
 
 void ForthCCodegen::optimizeStackUsage() {
     // Optimize stack operations for small stack usage
-    // This could include stack caching in registers
 }
 
 void ForthCCodegen::applyESP32Optimizations() {
@@ -1413,6 +1552,7 @@ void ForthCCodegen::applyESP32Optimizations() {
     // 2. Optimize GPIO operations for direct register access
     // 3. Use DMA for large memory operations
     // 4. Optimize interrupt handling
+
 }
 
 void ForthCCodegen::removeUnusedFunctions() {
@@ -1430,6 +1570,11 @@ void ForthCCodegen::removeUnusedFunctions() {
     }
 }
 
+
+// ============================================================================
+// Code Generation Finalization
+// ============================================================================
+
 void ForthCCodegen::finalizeGeneration() {
     // Generate CMakeLists.txt for the generated files
     generateCMakeLists();
@@ -1439,8 +1584,8 @@ void ForthCCodegen::finalizeGeneration() {
         generateESP32Main();
     }
     
-    // Add forward reference resolution
-    resolveForwardReferences();
+    // Add forward reference resolution 
+    // resolveForwardReferences();
 }
 
 void ForthCCodegen::generateCMakeLists() {
@@ -1460,9 +1605,7 @@ void ForthCCodegen::generateCMakeLists() {
     cmake << "    forth_runtime.h\n";
     cmake << ")\n";
     
-    std::ostringstream cmakeStream;
-    cmakeStream << cmake.str();
-    generatedFiles.push_back({"CMakeLists.txt", std::move(cmakeStream)});
+    generateFile("CMakeLists.txt", cmake.str());
 }
 
 void ForthCCodegen::generateESP32Main() {
@@ -1497,27 +1640,9 @@ void app_main(void) {
 }
 )";
     
-    generatedFiles.emplace_back("main.c", std::ostringstream());
-    generatedFiles.back().second << main.str();
+    generateFile("main.c", main.str());
 }
 
-void ForthCCodegen::resolveForwardReferences() {
-    if (!forwardReferences.empty()) {
-        std::ostringstream forward;
-        
-        forward << "// Forward reference resolution\n";
-        for (const auto& word : forwardReferences) {
-            if (wordFunctionNames.contains(word)) {
-                forward << "void forth_call_word_" << sanitizeIdentifier(word) 
-                       << "(void) { " << wordFunctionNames[word] << "(); }\n";
-            }
-        }
-        
-        generatedFiles.emplace_back("forth_forward.c", std::ostringstream());
-	generatedFiles.back().second << forward.str();
-	
-    }
-}
 
 // ============================================================================
 // File Output Methods
@@ -1551,37 +1676,97 @@ bool ForthCCodegen::writeToFiles(const std::string& outputDir) {
 // Utility Methods
 // ============================================================================
 
+void ForthCCodegen::debugGenerationState() const {
+    printf("=== Code Generation Debug Info ===\n");
+    printf("Generated files: %zu\n", generatedFiles.size());
+    printf("Current file index: %zu\n", currentFileIndex);
+    printf("Generated words: %zu\n", generatedWords.size());
+    printf("Used features: %zu\n", usedFeatures.size());
+    printf("Errors: %zu\n", errors.size());
+    printf("Warnings: %zu\n", warnings.size());
+    
+    printf("\nGenerated files:\n");
+    for (size_t i = 0; i < generatedFiles.size(); i++) {
+        const auto& [filename, content] = generatedFiles[i];
+        printf("  [%zu] %s (%zu chars)\n", i, filename.c_str(), content.str().length());
+    }
+    
+    if (!errors.empty()) {
+        printf("\nErrors:\n");
+        for (const auto& error : errors) {
+            printf("  ERROR: %s\n", error.c_str());
+        }
+    }
+    
+    if (!warnings.empty()) {
+        printf("\nWarnings:\n");
+        for (const auto& warning : warnings) {
+            printf("  WARNING: %s\n", warning.c_str());
+        }
+    }
+    printf("===================================\n");
+}
+
 void ForthCCodegen::resetGenerationState() {
-    generatedFiles.clear();
-    headerStream.str("");
-    sourceStream.str("");
-    functionsStream.str("");
-    errors.clear();
-    warnings.clear();
-    generatedWords.clear();
-    wordFunctionNames.clear();
-    usedFeatures.clear();
-    usedBuiltins.clear();
-    callGraph.clear();
-    variableMap.clear();
-    forwardReferences.clear();
-    inlineCandidates.clear();
-    iramFunctions.clear();
-    unusedWords.clear();
-    currentFileIndex = 0;
-    tempVarCounter = 0;
-    labelCounter = 0;
-    stringCounter = 0;
+    try {
+        // Clear all collections
+        generatedFiles.clear();
+        headerStream.str("");
+        sourceStream.str("");
+        functionsStream.str("");
+        errors.clear();
+        warnings.clear();
+        generatedWords.clear();
+        wordFunctionNames.clear();
+        usedFeatures.clear();
+        usedBuiltins.clear();
+        callGraph.clear();
+        variableMap.clear();
+        forwardReferences.clear();
+        inlineCandidates.clear();
+        iramFunctions.clear();
+        unusedWords.clear();
+        
+        // Reset counters
+        currentFileIndex = 0;
+        tempVarCounter = 0;
+        labelCounter = 0;
+        stringCounter = 0;
+        indentLevel = 0;
+        
+    } catch (const std::exception& e) {
+        // Even reset failed - create a minimal error state
+        errors.clear();
+        addError(std::string("Failed to reset generation state: ") + e.what());
+    }
 }
 
 void ForthCCodegen::generateFile(const std::string& filename, const std::string& content) {
-    generatedFiles.push_back({filename, std::ostringstream()});
-    generatedFiles.back().second << content;
+    try {
+        generatedFiles.emplace_back(filename, std::ostringstream());
+        generatedFiles.back().second << content;
+        
+        // Log for debugging
+        if (!content.empty()) {
+            // Successfully generated file
+        } else {
+            addWarning("Generated empty file: " + filename);
+        }
+    } catch (const std::exception& e) {
+        addError("Failed to generate file " + filename + ": " + std::string(e.what()));
+    }
 }
 
 void ForthCCodegen::emit(const std::string& code) {
-    if (currentFileIndex < generatedFiles.size()) {
+    if (currentFileIndex >= generatedFiles.size()) {
+        addError("Invalid file index in emit(): " + std::to_string(currentFileIndex));
+        return;
+    }
+    
+    try {
         generatedFiles[currentFileIndex].second << code;
+    } catch (const std::exception& e) {
+        addError(std::string("Failed to emit code: ") + e.what());
     }
 }
 
@@ -1632,7 +1817,9 @@ std::string ForthCCodegen::escapeCString(const std::string& str) {
                 if (c >= 32 && c <= 126) {
                     result += c;
                 } else {
-                    result += "\\x" + std::to_string((unsigned char)c);
+                    char buffer[8];
+                    sprintf(buffer, "\\x%02x", (unsigned char)c);
+                    result += buffer;
                 }
                 break;
         }
@@ -1659,7 +1846,7 @@ bool ForthCCodegen::isBuiltinWord(const std::string& word) const {
         "DUP", "DROP", "SWAP", "OVER", "ROT", "NIP", "TUCK",
         "!", "@", "C!", "C@", "EMIT", "TYPE", "CR", "SPACE", "SPACES",
         "AND", "OR", "XOR", "NOT", "LSHIFT", "RSHIFT",
-        "TRUE", "FALSE", "DEPTH", "CLEAR"
+        "TRUE", "FALSE", "DEPTH", "CLEAR", "."
     };
     return builtins.contains(word);
 }
@@ -1744,12 +1931,37 @@ std::string ForthCCodegen::getHeaderCode() const {
     return header.str();
 }
 
+void ForthCCodegen::setOptimizationLevel(int level) {
+    switch (level) {
+        case 0: // No optimization
+            optimizationFlags.useIRAM = false;
+            optimizationFlags.canInline = false;
+            optimizationFlags.smallStack = false;
+            break;
+        case 1: // Basic optimization
+            optimizationFlags.canInline = true;
+            break;
+        case 2: // Full optimization
+            optimizationFlags.useIRAM = true;
+            optimizationFlags.canInline = true;
+            optimizationFlags.smallStack = true;
+            break;
+        default:
+            optimizationFlags.canInline = true;
+            break;
+    }
+}
+        
+// ============================================================================
+// ESP-IDF Project Generation - FIXED IMPLEMENTATION
+// ============================================================================
+
 bool ForthCCodegen::writeESPIDFProject(const std::string& projectPath) const {
     try {
         // Create project directory structure
         fs::create_directories(projectPath);
         fs::create_directories(fs::path(projectPath) / "main");
-        fs::create_directories(fs::path(projectPath) / "components" / "forth_runtime");
+        fs::create_directories(fs::path(projectPath) / "components" / "forth_runtime" / "include");
 
         // Write root CMakeLists.txt
         std::ofstream rootCMake(fs::path(projectPath) / "CMakeLists.txt");
@@ -1758,7 +1970,7 @@ bool ForthCCodegen::writeESPIDFProject(const std::string& projectPath) const {
         rootCMake << R"(# ESP-IDF Project generated by FORTH compiler
 cmake_minimum_required(VERSION 3.16)
 
-set(COMPONENTS main esptool_py forth_runtime)
+set(COMPONENTS main forth_runtime)
 include($ENV{IDF_PATH}/tools/cmake/project.cmake)
 project(forth_app)
 )";
@@ -1796,26 +2008,45 @@ void app_main(void) {
 }
 )";
         mainFile.close();
-
-        // Write forth_program.c
+        // Write forth_program.c - find the main program file
         std::ofstream progFile(fs::path(projectPath) / "main" / "forth_program.c");
         if (!progFile.is_open()) return false;
-        progFile << getCompleteCode();
+        
+        for (const auto& [filename, content] : generatedFiles) {
+            if (filename == "forth_program.c") {
+                progFile << content.str();
+                break;
+            }
+        }
         progFile.close();
 
-        // Write component CMakeLists.txt
+        // FIXED: Write component CMakeLists.txt with proper syntax
         std::ofstream compCMake(fs::path(projectPath) / "components" / "forth_runtime" / "CMakeLists.txt");
         if (!compCMake.is_open()) return false;
 
-        compCMake << R"(idf_component_register(
-    SRCS "forth_runtime.c"
-    INCLUDE_DIRS "include"
-)
-)";
-        compCMake.close();
+        // Build list of source files first
+        std::vector<std::string> sourceFiles;
+        for (const auto& [filename, content] : generatedFiles) {
+            if (filename.ends_with(".c") && 
+                filename != "forth_program.c" && 
+                filename != "main.c") {
+                sourceFiles.push_back(filename);
+            }
+        }
 
-        // Create include directory
-        fs::create_directories(fs::path(projectPath) / "components" / "forth_runtime" / "include");
+        // Write the CMake file with proper formatting
+        compCMake << "idf_component_register(\n";
+        compCMake << "    SRCS";
+        
+        // Add each source file on a new line with proper indentation
+        for (const auto& filename : sourceFiles) {
+            compCMake << "\n        \"" << filename << "\"";
+        }
+        
+        compCMake << "\n    INCLUDE_DIRS \"include\"\n";
+        compCMake << "    REQUIRES esp_timer driver freertos\n";
+        compCMake << ")\n";
+        compCMake.close();
 
         // Write forth_runtime.h
         std::ofstream headerFile(fs::path(projectPath) / "components" / "forth_runtime" / "include" / "forth_runtime.h");
@@ -1823,17 +2054,15 @@ void app_main(void) {
         headerFile << getHeaderCode();
         headerFile.close();
 
-        // Write forth_runtime.c (implementation)
-        std::ofstream runtimeFile(fs::path(projectPath) / "components" / "forth_runtime" / "forth_runtime.c");
-        if (!runtimeFile.is_open()) return false;
-
-        // Combine all runtime implementation files
+        // Write all runtime implementation files to the component directory
         for (const auto& [filename, content] : generatedFiles) {
-            if (filename.ends_with(".c") && filename != "forth_program.c") {
-                runtimeFile << content.str() << "\n";
+            if (filename.ends_with(".c") && filename != "forth_program.c" && filename != "main.c") {
+                std::ofstream runtimeFile(fs::path(projectPath) / "components" / "forth_runtime" / filename);
+                if (!runtimeFile.is_open()) continue;
+                runtimeFile << content.str();
+                runtimeFile.close();
             }
         }
-        runtimeFile.close();
 
         // Write sdkconfig.defaults
         std::ofstream sdkconfig(fs::path(projectPath) / "sdkconfig.defaults");
@@ -1842,9 +2071,18 @@ void app_main(void) {
         sdkconfig << R"(# Default configuration for FORTH on ESP32
 CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
 CONFIG_PARTITION_TABLE_SINGLE_APP=y
-CONFIG_FREERTOS_HZ=1000=y
+CONFIG_FREERTOS_HZ=1000
 CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
+CONFIG_ESP32_DEFAULT_CPU_FREQ_240=y
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
 )";
+
+        // Add ESP32-specific configs based on features used
+        if (usedFeatures.contains("IO")) {
+            sdkconfig << "CONFIG_ESP_CONSOLE_UART_DEFAULT=y\n";
+            sdkconfig << "CONFIG_ESP_CONSOLE_UART_BAUDRATE_115200=y\n";
+        }
+
         sdkconfig.close();
 
         return true;
@@ -1857,6 +2095,7 @@ CONFIG_ESP_MAIN_TASK_STACK_SIZE=8192
 // ============================================================================
 // Factory Implementation
 // ============================================================================
+
 namespace ForthCodegenFactory {
 
 std::unique_ptr<ForthCCodegen> create(TargetType target) {
@@ -1872,11 +2111,15 @@ std::unique_ptr<ForthCCodegen> create(TargetType target) {
         case TargetType::ESP32_S3:
             codegen->setTarget("esp32s3");
             break;
+        case TargetType::NATIVE_LINUX:
+            codegen->setTarget("linux");
+            break;
         default:
             codegen->setTarget("esp32");
             break;
     }
 
+    configureForTarget(*codegen, target);
     return codegen;
 }
 
@@ -1886,12 +2129,17 @@ ForthCCodegen::ESP32Config getESP32Config(TargetType target) {
     switch (target) {
         case TargetType::ESP32_C3:
             config.cpuFreq = 160;
+            config.architecture = "riscv";
             break;
         case TargetType::ESP32_S3:
             config.cpuFreq = 240;
             config.useDMA = true;
+            config.architecture = "xtensa";
             break;
+        case TargetType::ESP32:
         default:
+            config.cpuFreq = 240;
+            config.architecture = "xtensa";
             break;
     }
     
@@ -1939,6 +2187,19 @@ TargetCapabilities getTargetCapabilities(TargetType target) {
 void configureForTarget(ForthCCodegen& codegen, TargetType target) {
     auto config = getESP32Config(target);
     codegen.setESP32Config(config);
+    
+    // Set optimization level based on target
+    switch (target) {
+        case TargetType::ESP32_C3:
+            codegen.setOptimizationLevel(1); // Basic optimization for RISC-V
+            break;
+        case TargetType::ESP32_S3:
+            codegen.setOptimizationLevel(2); // Full optimization for high-end chip
+            break;
+        default:
+            codegen.setOptimizationLevel(1);
+            break;
+    }
 }
 
 } // namespace ForthCodegenFactory

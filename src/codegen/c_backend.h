@@ -40,10 +40,12 @@ public:
         int priority;         // Task priority
         int cpuFreq;          // CPU frequency in MHz
         int flashFreq;        // Flash frequency in MHz
-        
+        std::string architecture;
+
         ESP32Config() : useTasking(true), useGPIO(true), useWiFi(false),
                        useTimer(true), useIRAM(true), useDMA(false),
-                       stackSize(1024), priority(5), cpuFreq(240), flashFreq(80) {}
+                       stackSize(1024), priority(5), cpuFreq(240), flashFreq(80), 
+                       architecture("xtensa") {}
     };
     
     // Optimization configuration
@@ -204,6 +206,7 @@ private:
     
     void analyzeProgram(const ProgramNode& program);
     void determineOptimizationStrategy();
+    void collectWordDefinitions(const ProgramNode& program);
     bool isPerformanceCritical(const std::string& wordName) const;
     bool isBuiltinWord(const std::string& word) const;
     
@@ -240,7 +243,8 @@ private:
     std::string sanitizeIdentifier(const std::string& name);
     std::string generateFunctionName(const std::string& wordName);
     std::string escapeCString(const std::string& str);
-    
+    void debugGenerationState() const;
+  
     // ========================================================================
     // Optimization Methods
     // ========================================================================
